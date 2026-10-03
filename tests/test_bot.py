@@ -22,8 +22,11 @@ ADMIN_ID = 1
 BOT_USER = {"id": 999, "is_bot": True, "first_name": "Bot", "username": "approape_bot"}
 
 
-def user(uid, is_bot=False):
-    return {"id": uid, "is_bot": is_bot, "first_name": f"U{uid}"}
+def user(uid, is_bot=False, username=None):
+    data = {"id": uid, "is_bot": is_bot, "first_name": f"U{uid}"}
+    if username:
+        data["username"] = username
+    return data
 
 
 class FakeBot:
@@ -58,30 +61,34 @@ def run():
 
 
 @pytest.fixture
-def env(run):
+def env(run, monkeypatch):
     store = Store(DSN)
     run(store.open())
     run(store._execute("TRUNCATE members, invite_links, invites, messages, violations, support_threads, moderation_events, bot_posts, bot_state, whitelist"))
     bot.store = store
     bot._admin_cache.clear()
     bot._permissions_cache.clear()
+    bot._site_handles = None
+    site_handles = set()  # usernames published on approape.ro profiles, per test
+    monkeypatch.setattr(bot.posts, "fetch_telegram_handles", AsyncMock(side_effect=lambda: set(site_handles)))
     bot._support_ack_at.clear()
     bot._moderation_lock = asyncio.Lock()  # each test runs on its own event loop
     bot._tick_lock = asyncio.Lock()
     fake = FakeBot()
-    yield SimpleNamespace(bot=fake, store=store, ctx=SimpleNamespace(bot=fake, args=[]))
+    yield SimpleNamespace(bot=fake, store=store, ctx=SimpleNamespace(bot=fake, args=[]), site_handles=site_handles)
     run(asyncio.sleep(0))
     run(store.close())
 
 
-def join(env, run, uid, link=None, old="left", new="member", is_bot=False):
+def join(env, run, uid, link=None, old="left", new="member", is_bot=False, by=None, username=None):
+    """`by`: the member who added her by hand (Telegram reports the adder as `from`)."""
     data = {
         "update_id": 1,
         "chat_member": {
             "chat": {"id": G, "type": "supergroup", "title": "g"},
-            "from": user(uid), "date": 0,
-            "old_chat_member": {"status": old, "user": user(uid, is_bot)},
-            "new_chat_member": {"status": new, "user": user(uid, is_bot)},
+            "from": user(by or uid), "date": 0,
+            "old_chat_member": {"status": old, "user": user(uid, is_bot, username)},
+            "new_chat_member": {"status": new, "user": user(uid, is_bot, username)},
         },
     }
     if link:
@@ -91,8 +98,8 @@ def join(env, run, uid, link=None, old="left", new="member", is_bot=False):
     run(bot.on_chat_member(Update.de_json(data, None), env.ctx))
 
 
-def message(env, run, uid, text=None, chat=G, mid=10, **extra):
-    msg = {"message_id": mid, "date": 0, "from": user(uid),
+def message(env, run, uid, text=None, chat=G, mid=10, username=None, **extra):
+    msg = {"message_id": mid, "date": 0, "from": user(uid, username=username),
            "chat": {"id": chat, "type": "supergroup" if chat == G else "private"}, **extra}
     if text is not None:
         msg["text"] = text
@@ -114,9 +121,9 @@ def gif_update(uid, mid, unique_id):
         "animation": gif, "document": {"file_id": unique_id, "file_unique_id": unique_id}}}, None)
 
 
-def private_command(env, run, uid, text):
+def private_command(env, run, uid, text, username=None):
     upd = Update.de_json({"update_id": 3, "message": {
-        "message_id": 1, "date": 0, "from": user(uid), "text": text,
+        "message_id": 1, "date": 0, "from": user(uid, username=username), "text": text,
         "chat": {"id": uid, "type": "private"}}}, env.bot)
     return upd
 
@@ -160,6 +167,61 @@ def test_rejoin_self_invite_and_bots_earn_nothing(env, run):
     join(env, run, 71)                          # 71 joins on their own...
     join(env, run, 71, link=link)               # ...then leaves and comes back through her link
     assert run(env.store.invite_count(G, 50)) == 0
+
+
+def test_members_added_by_hand_count_for_whoever_added_them(env, run):
+    # A member from before the bot, unknown to it, adds three people by hand.
+    join(env, run, 120, by=110)
+    join(env, run, 121, by=110)
+    assert not run(env.store.get_member(G, 110))["unlocked"]
+    join(env, run, 122, by=110)
+    assert env.bot.posting_unlocked(110)
+    assert run(env.store.get_member(G, 110))["legacy"]
+    message(env, run, 110, "salut, am adus oameni")
+    env.bot.delete_message.assert_not_awaited()
+
+
+def test_someone_added_by_hand_counts_once_for_whoever_brought_her_first(env, run):
+    join(env, run, 120, by=110)
+    join(env, run, 120, old="left", by=111)  # leaves, another member adds her again
+    assert run(env.store.invite_count(G, 110)) == 1
+    assert run(env.store.invite_count(G, 111)) == 0
+
+
+def test_telegram_on_her_approape_profile_lets_her_post_on_joining(env, run):
+    env.site_handles.add("ana_99")
+    join(env, run, 130, username="Ana_99")
+    assert env.bot.posting_unlocked(130)
+    assert not any(c.args[1:3] == (130, bot.READ_ONLY) for c in env.bot.restrict_chat_member.call_args_list)
+    env.bot.send_message.assert_not_awaited()  # no welcome asking for invites
+    assert events(env, run, 130) == ["unlock"]
+
+
+def test_member_from_before_the_bot_with_telegram_on_her_profile_keeps_posting(env, run):
+    env.site_handles.add("ana_99")
+    message(env, run, 131, "Bună tuturor", username="ana_99")
+    env.bot.delete_message.assert_not_awaited()
+    assert run(env.store.get_member(G, 131))["unlocked"]
+
+
+def test_locked_member_who_adds_telegram_to_her_profile_is_unlocked_by_start(env, run):
+    join(env, run, 132, username="ana_99")
+    run(bot.invite_status(private_command(env, run, 132, "/start", username="ana_99"), env.ctx))
+    assert "@ana_99) pe profilul tău de pe approape.ro" in env.bot.send_message.call_args.kwargs["text"]
+    assert not env.bot.posting_unlocked(132)
+
+    env.site_handles.add("ana_99")
+    bot._site_handles = None  # the 5-minute cache has expired
+    run(bot.invite_status(private_command(env, run, 132, "/start", username="ana_99"), env.ctx))
+    assert env.bot.posting_unlocked(132)
+    assert "acum poți posta" in env.bot.send_message.call_args.kwargs["text"]
+
+
+def test_member_without_username_or_handle_on_a_profile_still_needs_invites(env, run):
+    env.site_handles.add("altcineva")
+    join(env, run, 133)
+    join(env, run, 134, username="ana_99")
+    assert not env.bot.posting_unlocked(133) and not env.bot.posting_unlocked(134)
 
 
 def test_new_member_is_restricted_and_her_posts_deleted(env, run):

@@ -428,15 +428,18 @@ def build_application():
     application = Application.builder().token(BOT_TOKEN).updater(None).build()
     private = filters.ChatType.PRIVATE
     group = filters.Chat(GROUP_CHAT_ID) if GROUP_CHAT_ID else filters.ChatType.GROUPS
-    support = filters.Chat(SUPPORT_CHAT_ID) if SUPPORT_CHAT_ID else filters.NONE
 
     application.add_handler(CommandHandler("chatid", cmd_chatid))
     application.add_handler(CommandHandler("stats", cmd_stats, filters=group))
-    application.add_handler(CommandHandler("start", cmd_start, filters=private & ~support))
-    application.add_handler(CommandHandler(["invite", "status"], invite_status, filters=private & ~support))
+    application.add_handler(CommandHandler("start", cmd_start, filters=private))
+    application.add_handler(CommandHandler(["invite", "status"], invite_status, filters=private))
     application.add_handler(CommandHandler(["invite", "status"], cmd_group_redirect, filters=group))
-    application.add_handler(MessageHandler(support & ~filters.COMMAND, on_support_reply))
-    application.add_handler(MessageHandler(private & ~support & ~filters.COMMAND, on_private_message))
+
+    if SUPPORT_CHAT_ID:
+        support = filters.Chat(SUPPORT_CHAT_ID)
+        application.add_handler(MessageHandler(support & ~filters.COMMAND, on_support_reply))
+
+    application.add_handler(MessageHandler(private & ~filters.COMMAND, on_private_message))
     application.add_handler(ChatMemberHandler(on_chat_member, ChatMemberHandler.CHAT_MEMBER))
     # Separate handler group so every group message is moderated, commands included:
     # otherwise "/anything <ad>" would slip past the filters.

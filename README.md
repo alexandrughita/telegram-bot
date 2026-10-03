@@ -40,8 +40,12 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
     WHERE user_id = <id> ORDER BY created_at DESC;
 
 **Help desk**
-- `https://t.me/<bot>?start=ajutor` opens the private chat with a help message. That's the
-  link the site uses wherever it says "scrie-ne pe Telegram".
+- The site's help links open the private chat as `https://t.me/approape_guard_bot?start=<topic>`:
+  - `ajutor` — general help;
+  - `cont` — could not create an account;
+  - `revendicare` — wants to claim a profile but the SMS does not arrive.
+  The bot tells the person what to send. For `cont` and `revendicare` it also alerts
+  `SUPPORT_CHAT_ID`, and a reply to that alert reaches the person.
 - Anything written to the bot privately reaches `SUPPORT_CHAT_ID`. An admin's **reply**
   to that message goes back to the person.
 

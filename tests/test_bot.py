@@ -309,3 +309,28 @@ def test_help_message_reaches_support_and_reply_comes_back(env, run):
         "reply_to_message": {"message_id": 501, "date": 0, "chat": {"id": S, "type": "supergroup"}}}}, None)
     run(bot.on_support_reply(reply, env.ctx))
     env.bot.copy_message.assert_awaited_with(42, S, 8)
+
+
+def start(env, run, uid, payload):
+    upd = private_command(env, run, uid, f"/start {payload}")
+    run(bot.cmd_start(upd, SimpleNamespace(bot=env.bot, args=[payload])))
+
+
+def test_account_help_link_explains_and_alerts_support(env, run):
+    start(env, run, 42, "cont")
+    texts = [(c.kwargs.get("chat_id") or c.args[0], c.kwargs.get("text") or c.args[1])
+             for c in env.bot.send_message.call_args_list]
+    assert texts[0][0] == 42 and "numărul de telefon" in texts[0][1]
+    assert texts[1][0] == S and "nu își poate face cont" in texts[1][1]
+    # An admin replying to that alert reaches the person.
+    assert run(env.store.support_user_for(500)) == 42
+
+
+def test_plain_help_link_does_not_alert_support(env, run):
+    start(env, run, 42, "ajutor")
+    assert env.bot.send_message.await_count == 1
+
+
+def test_unknown_start_payload_shows_invite_status(env, run):
+    start(env, run, 42, "invite")
+    assert "Linkul tău" in env.bot.send_message.call_args.kwargs["text"]

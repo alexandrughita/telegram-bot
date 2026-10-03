@@ -249,12 +249,44 @@ async def invite_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         disable_web_page_preview=True)
 
 
+# Help links on the site open the bot as t.me/<bot>?start=<topic>. Each topic tells
+# the person what to send, and the support chat which problem they came with.
+HELP_TOPICS = {
+    "ajutor": (
+        "Scrie-ne aici cu ce te putem ajuta. Echipa approape.ro îți răspunde în această conversație.",
+        None),
+    "cont": (
+        "Ne pare rău că nu ți-ai putut face cont. Ca să te ajutăm, scrie-ne aici:\n"
+        "1. numărul de telefon cu care ai încercat;\n"
+        "2. ce eroare ai văzut (o captură de ecran e cel mai bine);\n"
+        "3. dacă ești escortă, creatoare sau client.\n\n"
+        "Între timp poți intra pe approape.ro cu Google — merge și când SMS-ul nu vine.\n"
+        "Îți răspundem aici.",
+        "nu își poate face cont"),
+    "revendicare": (
+        "Vrei să-ți revendici profilul de pe approape.ro și SMS-ul nu ajunge. Scrie-ne aici:\n"
+        "1. linkul profilului tău de pe approape.ro;\n"
+        "2. numărul de telefon de pe profil;\n"
+        "3. o captură de ecran cu eroarea, dacă ai.\n\n"
+        "Verificăm că profilul e al tău și îți răspundem aici.",
+        "vrea să-și revendice profilul, SMS-ul nu ajunge"),
+}
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.args and context.args[0] == "ajutor":
-        await update.effective_message.reply_text(
-            "Scrie-ne aici cu ce te putem ajuta. Echipa approape.ro îți răspunde în această conversație.")
+    topic = HELP_TOPICS.get(context.args[0]) if context.args else None
+    if not topic:
+        await invite_status(update, context)
         return
-    await invite_status(update, context)
+    reply, support_note = topic
+    await update.effective_message.reply_text(reply)
+    if support_note and SUPPORT_CHAT_ID:
+        user = update.effective_user
+        note = await context.bot.send_message(
+            SUPPORT_CHAT_ID,
+            f"🆘 {user.full_name}" + (f" (@{user.username})" if user.username else "") + f" · id {user.id}\n"
+            f"Vine de pe site: {support_note}. Răspunde cu reply aici.")
+        await store.save_support_thread(note.message_id, user.id)
 
 
 async def cmd_group_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):

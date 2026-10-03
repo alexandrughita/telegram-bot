@@ -53,6 +53,11 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
     WHERE user_id = <id> ORDER BY created_at DESC;
 
 **Help desk**
+- `/start` with no topic shows a menu: *Nu primesc SMS-ul* (answers with the Google sign-in
+  workaround), *Revendicare profil* (same as the `revendicare` topic below, support is
+  alerted), *Cum pot posta în grup* (personal link + progress), *Telegram pe profilul meu*
+  (where to add it on the site), *Vorbește cu un om*. Only what the buttons cannot answer
+  reaches a person.
 - The site's help links open the private chat as `https://t.me/approape_guard_bot?start=<topic>`:
   - `ajutor` — general help;
   - `cont` — could not create an account;
@@ -78,10 +83,13 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
 
 | Command | Where | Who |
 |---|---|---|
-| `/start`, `/invite`, `/status` | private | anyone — personal link + progress |
+| `/start` | private | anyone — help menu (`?start=invite` → personal link + progress) |
+| `/invite`, `/status` | private | anyone — personal link + progress |
 | `/invite`, `/status` | group | button to the private chat |
 | `/stats` | group | admins |
 | `/whitelist`, `/unwhitelist` | group, as a reply to the person or with her id | admins |
+| `/info` | group (reply or id) or private (id) | admins — why she can or cannot post: status, invites, Telegram on a site profile, violations, last 5 actions |
+| `/unlock` | group (reply or id) or private (id) | admins — may post without invites; unlike `/whitelist`, every other rule still applies; also lifts a mute |
 | `/chatid` | anywhere | group admins / anyone in private |
 
 ## Setup
@@ -123,6 +131,9 @@ Optional (defaults shown):
     WEBHOOK_URL=https://...      (not needed on Render: RENDER_EXTERNAL_URL is used)
 
 ## Render Free
+
+`GET /` returns `"commit"`: the first 7 characters of `RENDER_GIT_COMMIT`, which Render
+sets on every deploy. That is how to tell whether a merge is live.
 
 The service sleeps after ~15 minutes without traffic and wakes on the next update from
 Telegram (first response ~30–60s; Telegram retries in the meantime). The webhook is set on

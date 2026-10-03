@@ -40,7 +40,9 @@ class FakeBot:
         self.get_chat = AsyncMock(return_value=SimpleNamespace(permissions=None))
         self.get_chat_administrators = AsyncMock(
             return_value=[SimpleNamespace(user=SimpleNamespace(id=ADMIN_ID))])
-        self.get_chat_member = AsyncMock(return_value=SimpleNamespace(status="member"))
+        self.get_chat_member = AsyncMock(side_effect=lambda chat_id, uid: SimpleNamespace(
+            status="member", user=SimpleNamespace(id=uid, username=None, first_name=f"U{uid}", is_bot=False)))
+        self.answer_callback_query = AsyncMock()
         self.send_photo = AsyncMock()
         self.send_poll = AsyncMock()
 
@@ -497,7 +499,7 @@ def test_tick_endpoint_refuses_without_the_secret(monkeypatch):
 
 
 # ---- whitelist ------------------------------------------------------------
-def group_command(env, run, uid, text, reply_to_uid=None):
+def group_command(env, run, uid, text, reply_to_uid=None, handler=None):
     msg = {"message_id": 30, "date": 0, "from": user(uid), "text": text,
            "chat": {"id": G, "type": "supergroup"},
            "entities": [{"type": "bot_command", "offset": 0, "length": len(text.split()[0])}]}
@@ -505,7 +507,7 @@ def group_command(env, run, uid, text, reply_to_uid=None):
         msg["reply_to_message"] = {"message_id": 29, "date": 0, "from": user(reply_to_uid),
                                    "chat": {"id": G, "type": "supergroup"}, "text": "hei"}
     upd = Update.de_json({"update_id": 6, "message": msg}, None)
-    run(bot.cmd_whitelist(upd, SimpleNamespace(bot=env.bot, args=text.split()[1:])))
+    run((handler or bot.cmd_whitelist)(upd, SimpleNamespace(bot=env.bot, args=text.split()[1:])))
 
 
 def test_whitelisted_member_skips_every_rule(env, run):
@@ -547,3 +549,81 @@ def test_whitelisted_private_status(env, run):
     group_command(env, run, ADMIN_ID, "/whitelist 96")
     run(bot.invite_status(private_command(env, run, 96, "/status"), env.ctx))
     assert "lista albă" in env.bot.send_message.call_args.kwargs["text"]
+
+
+# ---- /start menu --------------------------------------------------------
+def tap(env, run, uid, key):
+    upd = Update.de_json({"update_id": 7, "callback_query": {
+        "id": "1", "from": user(uid), "chat_instance": "c", "data": f"menu:{key}",
+        "message": {"message_id": 3, "date": 0, "from": BOT_USER, "text": "Salut!",
+                    "chat": {"id": uid, "type": "private"}}}}, env.bot)
+    run(bot.on_menu(upd, env.ctx))
+
+
+def last_text(env):
+    call = env.bot.send_message.call_args
+    return call.kwargs.get("text") or call.args[1]
+
+
+def test_plain_start_shows_the_help_menu(env, run):
+    run(bot.cmd_start(private_command(env, run, 42, "/start"), env.ctx))
+    markup = env.bot.send_message.call_args.kwargs["reply_markup"]
+    assert [row[0].callback_data for row in markup.inline_keyboard] == [f"menu:{k}" for k, _ in bot.MENU]
+
+
+def test_menu_answers_sms_on_the_spot_without_alerting_support(env, run):
+    tap(env, run, 42, "sms")
+    env.bot.answer_callback_query.assert_awaited()
+    assert "Continuă cu Google" in last_text(env)
+    assert env.bot.send_message.await_count == 1
+
+
+def test_menu_claim_asks_for_details_and_alerts_support(env, run):
+    tap(env, run, 42, "revendicare")
+    chats = [c.kwargs.get("chat_id") or c.args[0] for c in env.bot.send_message.call_args_list]
+    assert chats == [42, S]
+
+
+def test_menu_group_shows_her_invite_status(env, run):
+    tap(env, run, 42, "grup")
+    assert "Linkul tău" in last_text(env)
+
+
+def test_menu_back_shows_the_menu_again(env, run):
+    tap(env, run, 42, "meniu")
+    assert last_text(env) == "Salut! Cu ce te putem ajuta?"
+
+
+# ---- /info and /unlock ----------------------------------------------------
+def test_info_explains_why_she_cannot_post(env, run):
+    message(env, run, 90, "salut")  # pre-bot member, locked on her first post
+    group_command(env, run, ADMIN_ID, "/info", reply_to_uid=90, handler=bot.cmd_info)
+    text = last_text(env)
+    for part in ("Nu poate posta încă", "înainte de bot", f"Invitații: 0/{bot.INVITES_REQUIRED}",
+                 "approape.ro: nu", "delete — fără drept de postare"):
+        assert part in text, part
+
+
+def test_info_and_unlock_are_admin_only(env, run):
+    group_command(env, run, 77, "/info 90", handler=bot.cmd_info)
+    group_command(env, run, 77, "/unlock 90", handler=bot.cmd_unlock)
+    env.bot.send_message.assert_not_awaited()
+    env.bot.restrict_chat_member.assert_not_awaited()
+
+
+def test_unlock_lets_her_post_but_keeps_the_other_rules(env, run):
+    group_command(env, run, ADMIN_ID, "/unlock 91", handler=bot.cmd_unlock)
+    assert env.bot.posting_unlocked(91)
+    assert run(env.store.get_member(G, 91))["unlocked"]
+    message(env, run, 91, "Anunț: sună la 0722123456", mid=1)
+    env.bot.delete_message.assert_not_awaited()
+    message(env, run, 91, "Anunț: sună la 0722123456", mid=2)  # same ad again
+    env.bot.delete_message.assert_awaited_with(G, 2)
+    assert events(env, run, 91) == ["unlock", "delete"]
+
+
+def test_health_reports_the_live_commit(monkeypatch):
+    from fastapi.testclient import TestClient
+    monkeypatch.setenv("RENDER_GIT_COMMIT", "ab27b5d0123456789")
+    assert TestClient(bot.app).get("/").json()["commit"] == "ab27b5d"
+

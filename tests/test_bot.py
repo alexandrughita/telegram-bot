@@ -64,6 +64,7 @@ def env(run):
     bot._admin_cache.clear()
     bot._permissions_cache.clear()
     bot._support_ack_at.clear()
+    bot._moderation_lock = asyncio.Lock()  # each test runs on its own event loop
     fake = FakeBot()
     yield SimpleNamespace(bot=fake, store=store, ctx=SimpleNamespace(bot=fake, args=[]))
     run(asyncio.sleep(0))
@@ -96,6 +97,18 @@ def message(env, run, uid, text=None, chat=G, mid=10, **extra):
     handler = bot.on_group_message if chat == G else bot.on_private_message
     run(handler(upd, env.ctx))
     return upd
+
+
+def posting_member(env, run, uid):
+    """A member who has already earned the right to post."""
+    run(env.store.add_member(G, SimpleNamespace(id=uid, username=None, first_name=f"U{uid}"), unlocked=True))
+
+
+def gif_update(uid, mid, unique_id):
+    gif = {"file_id": unique_id, "file_unique_id": unique_id, "width": 1, "height": 1, "duration": 1}
+    return Update.de_json({"update_id": mid, "message": {
+        "message_id": mid, "date": 0, "from": user(uid), "chat": {"id": G, "type": "supergroup"},
+        "animation": gif, "document": {"file_id": unique_id, "file_unique_id": unique_id}}}, None)
 
 
 def private_command(env, run, uid, text):
@@ -152,14 +165,29 @@ def test_new_member_is_restricted_and_her_posts_deleted(env, run):
     assert events(env, run, 80) == ["delete"]
 
 
-def test_member_from_before_the_bot_keeps_posting(env, run):
+def test_member_from_before_the_bot_is_locked_until_three_invites(env, run):
     message(env, run, 90, "Bună tuturor, sunt aici de mult timp")
-    env.bot.delete_message.assert_not_awaited()
-    assert run(env.store.get_member(G, 90))["legacy"]
+    env.bot.delete_message.assert_awaited_with(G, 10)
+    assert env.bot.restrict_chat_member.call_args.args[1:3] == (90, bot.READ_ONLY)
+    assert "3 membri" in env.bot.send_message.call_args.args[1]
+    member = run(env.store.get_member(G, 90))
+    assert member["legacy"] and not member["unlocked"]
+
+    run(bot.invite_status(private_command(env, run, 90, "/invite"), env.ctx))
+    link = run(env.store.get_invite_link(G, 90))
+    for invited in (91, 92, 93):
+        join(env, run, invited, link=link)
+    assert env.bot.posting_unlocked(90)
+
+
+def test_member_from_before_the_bot_asking_for_her_link_is_still_locked(env, run):
+    run(bot.invite_status(private_command(env, run, 90, "/invite"), env.ctx))
+    assert not run(env.store.get_member(G, 90))["unlocked"]
+    assert "Mai ai nevoie de 3" in env.bot.send_message.call_args.kwargs["text"]
 
 
 def test_unlocked_member_who_rejoins_can_post_again(env, run):
-    message(env, run, 90, "prima postare")  # legacy -> unlocked
+    posting_member(env, run, 90)
     join(env, run, 90)
     assert env.bot.posting_unlocked(90)
 
@@ -171,6 +199,7 @@ def test_admin_is_never_moderated_even_untracked(env, run):
 
 
 def test_repeated_ad_escalates_delete_warn_warn_mute(env, run):
+    posting_member(env, run, 90)
     message(env, run, 90, "Anunț: sună 0722123456", mid=1)
     env.bot.send_message.reset_mock()
     for mid in range(2, 6):
@@ -186,6 +215,7 @@ def test_repeated_ad_escalates_delete_warn_warn_mute(env, run):
 
 
 def test_second_gif_within_a_minute_is_removed(env, run):
+    posting_member(env, run, 90)
     gif = {"file_id": "a", "file_unique_id": "gif1", "width": 1, "height": 1, "duration": 1}
     message(env, run, 90, mid=1, animation=gif, document={"file_id": "a", "file_unique_id": "gif1"})
     gif2 = {**gif, "file_unique_id": "gif2"}
@@ -193,7 +223,20 @@ def test_second_gif_within_a_minute_is_removed(env, run):
     env.bot.delete_message.assert_awaited_once_with(G, 2)
 
 
+def test_gifs_arriving_together_are_still_limited(env, run):
+    # Telegram delivers a backlog (e.g. when Render wakes up) over parallel
+    # webhook requests, so the handlers run concurrently.
+    posting_member(env, run, 90)
+    updates = [gif_update(90, mid, f"gif{mid}") for mid in range(1, 5)]
+
+    async def burst():
+        await asyncio.gather(*(bot.on_group_message(u, env.ctx) for u in updates))
+    run(burst())
+    assert env.bot.delete_message.await_count == 3
+
+
 def test_hidden_link_counts_as_a_link(env, run):
+    posting_member(env, run, 90)
     message(env, run, 90, "vezi aici", mid=1,
             entities=[{"type": "text_link", "offset": 0, "length": 4, "url": "https://x.ro/a"}])
     message(env, run, 90, "detalii", mid=2,

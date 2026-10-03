@@ -59,6 +59,10 @@ _admin_cache = {}        # chat_id -> (expires_at, set of admin ids)
 _permissions_cache = {}  # chat_id -> (expires_at, ChatPermissions)
 _support_ack_at = {}     # user_id -> last time we acknowledged a help message
 _background = set()      # strong refs to fire-and-forget tasks
+# Telegram delivers updates over parallel webhook requests (a whole backlog at once
+# when Render wakes up). Each check reads what earlier messages saved, so group
+# messages are moderated one at a time or a burst slips through unchecked.
+_moderation_lock = asyncio.Lock()
 _last_cleanup = 0.0
 
 
@@ -224,7 +228,8 @@ async def invite_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     member = await store.get_member(GROUP_CHAT_ID, user.id)
     if member is None:
         # In the group, but the bot never saw her join: she was there before it.
-        member = await store.add_member(GROUP_CHAT_ID, user, unlocked=True, legacy=True)
+        # She still needs her invites, like everyone else.
+        member = await store.add_member(GROUP_CHAT_ID, user, legacy=True)
 
     try:
         link = await personal_link(bot, user.id)
@@ -341,33 +346,40 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user or user.is_bot or await is_admin(bot, GROUP_CHAT_ID, user.id):
         return
 
-    member = await store.get_member(GROUP_CHAT_ID, user.id)
-    if member is None:
-        # The bot never saw her join, so she was in the group before it: she keeps posting.
-        member = await store.add_member(GROUP_CHAT_ID, user, unlocked=True, legacy=True)
-    if not member["unlocked"]:
-        # Telegram should already stop her; this covers the moment before the restriction lands.
-        try:
-            await bot.delete_message(message.chat_id, message.message_id)
-        except Exception:
-            pass
-        await store.log_event(GROUP_CHAT_ID, user.id, "delete", "fără drept de postare", message.message_id)
-        return
+    async with _moderation_lock:
+        member = await store.get_member(GROUP_CHAT_ID, user.id)
+        if member is None:
+            # The bot never saw her join, so she was in the group before it. She still
+            # needs her invites; Telegram has not restricted her yet, so that happens below.
+            member = await store.add_member(GROUP_CHAT_ID, user, legacy=True)
+        if not member["unlocked"]:
+            try:
+                await bot.delete_message(message.chat_id, message.message_id)
+            except Exception:
+                pass
+            await store.log_event(GROUP_CHAT_ID, user.id, "delete", "fără drept de postare", message.message_id)
+            await restrict(bot, GROUP_CHAT_ID, user.id)
+            await send_temporary(
+                bot, GROUP_CHAT_ID,
+                f"{user.mention_html()}, ca să poți posta, adu {INVITES_REQUIRED} membri "
+                f"prin linkul tău personal.",
+                NOTICE_TTL_SECONDS, reply_markup=invite_button(bot))
+            return
 
-    fp = fingerprint_of(message)
-    is_gif = message.animation is not None
-    if is_gif and await store.recent_gif_count(GROUP_CHAT_ID, user.id, GIF_WINDOW_SECONDS) >= GIF_MAX_IN_WINDOW:
-        await punish(bot, message, "prea multe GIF-uri la rând")
-        return
+        fp = fingerprint_of(message)
+        is_gif = message.animation is not None
+        if is_gif and await store.recent_gif_count(GROUP_CHAT_ID, user.id, GIF_WINDOW_SECONDS) >= GIF_MAX_IN_WINDOW:
+            await punish(bot, message, "prea multe GIF-uri la rând")
+            return
 
-    earlier = await store.recent_fingerprints(GROUP_CHAT_ID, user.id, DUPLICATE_COOLDOWN_HOURS)
-    reason = duplicate_reason(fp, earlier, SIMILARITY_THRESHOLD)
-    if reason:
-        await punish(bot, message, f"reclamă repetată: {reason}")
-        return
+        earlier = await store.recent_fingerprints(GROUP_CHAT_ID, user.id, DUPLICATE_COOLDOWN_HOURS)
+        reason = duplicate_reason(fp, earlier, SIMILARITY_THRESHOLD)
+        if reason:
+            await punish(bot, message, f"reclamă repetată: {reason}")
+            return
 
-    await store.save_message(GROUP_CHAT_ID, user.id, message.message_id, fp, is_gif)
-    await maybe_cleanup()
+        await store.save_message(GROUP_CHAT_ID, user.id, message.message_id, fp, is_gif)
+        await maybe_cleanup()
 
 
 # ------------------------------------------------------------

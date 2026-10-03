@@ -13,14 +13,15 @@ bot's private chat.
 - Only joins through the bot's personal links count. A member added by hand, a rejoin,
   yourself, or a bot never counts. A person counts once, for whoever brought them first.
 - An invite counts **for good**, even if the invited person leaves later.
-- Members who were in the group **before** the bot keep posting (marked `legacy`).
+- Members who were in the group **before** the bot need their 3 invites too (marked
+  `legacy`): their first post is deleted, they are restricted and shown their link.
 - An unlocked member who leaves and comes back can post again straight away.
 
 **Moderation** (for everyone except the group's admins, read live from Telegram)
 - Repeated ad within 6 hours: the same photo/clip, any shared link (including links
   hidden behind text), the same Romanian mobile number, the same text, or a near-identical
   text (≥ 40 characters).
-- At most 1 GIF message per 60 seconds.
+- At most 1 GIF message per 60 seconds (a burst delivered all at once still counts).
 - Escalation within 48h: 1st violation = delete only; 2nd and 3rd = delete + warning;
   4th onwards = delete + mute for 60 minutes.
 - Messages posted "as a channel" are deleted; anonymous admins and posts from the linked

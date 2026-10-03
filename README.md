@@ -18,10 +18,16 @@ bot's private chat.
 - An unlocked member who leaves and comes back can post again straight away.
 
 **Moderation** (for everyone except the group's admins, read live from Telegram)
+- A message containing a link to **approape.ro** (or a subdomain, including a link hidden
+  behind text) is exempt from every rule below and from the invite requirement. A member
+  Telegram has already restricted still cannot send anything, though.
 - Repeated ad within 6 hours: the same photo/clip, any shared link (including links
   hidden behind text), the same Romanian mobile number, the same text, or a near-identical
   text (≥ 40 characters).
-- At most 1 GIF or animated sticker per 60 seconds (a burst delivered all at once still counts).
+- At most 1 GIF message per 60 seconds (a burst delivered all at once still counts).
+- At most 1 message with animated/video stickers per 24 hours. The next one is deleted with
+  a note recommending an approape.ro account; it is not a violation (no warning, no mute).
+  Static stickers are not limited.
 - Escalation within 48h: 1st violation = delete only; 2nd and 3rd = delete + warning;
   4th onwards = delete + mute for 60 minutes.
 - Messages posted "as a channel" are deleted; anonymous admins and posts from the linked

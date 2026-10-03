@@ -11,7 +11,7 @@ from telegram import ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from db import Store
-from moderation import build_fingerprint, duplicate_reason, violation_action
+from moderation import build_fingerprint, duplicate_reason, links_to_approape, violation_action
 
 # ------------------------------------------------------------
 # Configuration
@@ -36,6 +36,8 @@ MUTE_MINUTES = int(os.environ.get("MUTE_MINUTES", "60"))
 PORT = int(os.environ.get("PORT", "10000"))
 
 WELCOME_TTL_SECONDS = 180
+# One message with animated/video stickers per member per day.
+STICKER_WINDOW_HOURS = 24
 NOTICE_TTL_SECONDS = 60
 CACHE_TTL_SECONDS = 300
 
@@ -320,7 +322,7 @@ async def maybe_cleanup():
     if time.monotonic() - _last_cleanup < 3600:
         return
     _last_cleanup = time.monotonic()
-    keep_hours = max(DUPLICATE_COOLDOWN_HOURS, GIF_WINDOW_SECONDS / 3600)
+    keep_hours = max(DUPLICATE_COOLDOWN_HOURS, GIF_WINDOW_SECONDS / 3600, STICKER_WINDOW_HOURS)
     await store.cleanup(keep_hours)
 
 
@@ -346,6 +348,10 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user or user.is_bot or await is_admin(bot, GROUP_CHAT_ID, user.id):
         return
 
+    fp = fingerprint_of(message)
+    if links_to_approape(fp.urls):
+        return  # a link to approape.ro may be posted any time, by anyone in the group
+
     async with _moderation_lock:
         member = await store.get_member(GROUP_CHAT_ID, user.id)
         if member is None:
@@ -366,10 +372,26 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 NOTICE_TTL_SECONDS, reply_markup=invite_button(bot))
             return
 
-        fp = fingerprint_of(message)
-        # Animated and video stickers are used exactly like GIFs; static ones are not.
+        is_gif = message.animation is not None
+        # Static stickers are left alone; animated and video ones are limited per day.
         sticker = message.sticker
-        is_gif = message.animation is not None or bool(sticker and (sticker.is_animated or sticker.is_video))
+        is_sticker = bool(sticker and (sticker.is_animated or sticker.is_video))
+        if is_sticker and await store.recent_sticker_count(GROUP_CHAT_ID, user.id, STICKER_WINDOW_HOURS) >= 1:
+            # Deleted and explained, but not a violation: no warning, no mute.
+            try:
+                await bot.delete_message(message.chat_id, message.message_id)
+            except Exception:
+                pass
+            await store.log_event(GROUP_CHAT_ID, user.id, "delete", "stickere animate: limita zilnică",
+                                  message.message_id)
+            await send_temporary(
+                bot, GROUP_CHAT_ID,
+                f"{user.mention_html()}, poți trimite un mesaj cu stickere animate pe zi. "
+                f"Ca să postezi oricând, fă-ți cont pe "
+                f'<a href="https://www.approape.ro">approape.ro</a>: mesajele care conțin un link '
+                f"approape.ro (de exemplu profilul tău) nu au nicio limită.",
+                NOTICE_TTL_SECONDS)
+            return
         if is_gif and await store.recent_gif_count(GROUP_CHAT_ID, user.id, GIF_WINDOW_SECONDS) >= GIF_MAX_IN_WINDOW:
             await punish(bot, message, "prea multe GIF-uri la rând")
             return
@@ -380,7 +402,7 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await punish(bot, message, f"reclamă repetată: {reason}")
             return
 
-        await store.save_message(GROUP_CHAT_ID, user.id, message.message_id, fp, is_gif)
+        await store.save_message(GROUP_CHAT_ID, user.id, message.message_id, fp, is_gif, is_sticker)
         await maybe_cleanup()
 
 

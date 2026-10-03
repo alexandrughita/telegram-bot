@@ -51,3 +51,14 @@ def test_unrelated_messages_pass():
 
 def test_escalation_ladder():
     assert [violation_action(n) for n in range(1, 6)] == ["delete", "warn", "warn", "mute", "mute"]
+
+
+def test_links_to_approape_matches_the_domain_and_subdomains_only():
+    from moderation import extract_urls, links_to_approape
+    assert links_to_approape(extract_urls("profil: https://www.approape.ro/escorte/ana"))
+    assert links_to_approape(extract_urls("vezi aici", ["approape.ro/creatoare/x"]))  # url entity
+    assert links_to_approape(extract_urls("", ["https://blog.approape.ro"]))
+    assert not links_to_approape(extract_urls("https://approape.ro.example.com/x"))
+    assert not links_to_approape(extract_urls("https://approape.ro@evil.com/x"))
+    assert not links_to_approape(extract_urls("https://notapproape.ro"))
+    assert not links_to_approape(extract_urls("scrie approape ro"))

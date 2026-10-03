@@ -223,24 +223,56 @@ def test_second_gif_within_a_minute_is_removed(env, run):
     env.bot.delete_message.assert_awaited_once_with(G, 2)
 
 
-def test_animated_and_video_stickers_count_as_gifs(env, run):
+def test_one_animated_sticker_message_a_day(env, run):
     posting_member(env, run, 90)
     sticker = {"file_id": "s", "file_unique_id": "st1", "width": 512, "height": 512,
                "type": "regular", "is_animated": True, "is_video": False}
     message(env, run, 90, mid=1, sticker=sticker)
+    run(env.store._execute("UPDATE messages SET created_at = now() - interval '23 hours'"))
     message(env, run, 90, mid=2, sticker={**sticker, "file_unique_id": "st2", "is_animated": False, "is_video": True})
-    gif = {"file_id": "a", "file_unique_id": "gif1", "width": 1, "height": 1, "duration": 1}
-    message(env, run, 90, mid=3, animation=gif, document={"file_id": "a", "file_unique_id": "gif1"})
-    assert [c.args for c in env.bot.delete_message.call_args_list] == [(G, 2), (G, 3)]
+    env.bot.delete_message.assert_awaited_once_with(G, 2)
+    notice = env.bot.send_message.call_args.args[1]
+    assert "un mesaj cu stickere animate pe zi" in notice and "approape.ro" in notice
+    assert events(env, run, 90) == ["delete"]  # not a violation: no warning, no mute
+    assert run(env.store._one("SELECT COUNT(*) AS n FROM violations"))["n"] == 0
 
 
-def test_static_stickers_are_not_gifs(env, run):
+def test_animated_sticker_allowed_again_after_a_day(env, run):
+    posting_member(env, run, 90)
+    sticker = {"file_id": "s", "file_unique_id": "st1", "width": 512, "height": 512,
+               "type": "regular", "is_animated": True, "is_video": False}
+    message(env, run, 90, mid=1, sticker=sticker)
+    run(env.store._execute("UPDATE messages SET created_at = now() - interval '25 hours'"))
+    message(env, run, 90, mid=2, sticker={**sticker, "file_unique_id": "st2"})
+    env.bot.delete_message.assert_not_awaited()
+
+
+def test_static_stickers_are_not_limited(env, run):
     posting_member(env, run, 90)
     sticker = {"file_id": "s", "file_unique_id": "st1", "width": 512, "height": 512,
                "type": "regular", "is_animated": False, "is_video": False}
     message(env, run, 90, mid=1, sticker=sticker)
     message(env, run, 90, mid=2, sticker={**sticker, "file_unique_id": "st2"})
     env.bot.delete_message.assert_not_awaited()
+
+
+def test_a_message_with_an_approape_link_is_exempt_from_every_rule(env, run):
+    posting_member(env, run, 90)
+    for mid in range(1, 4):
+        message(env, run, 90, "Profilul meu: https://www.approape.ro/escorte/ana sună 0722123456", mid=mid)
+    message(env, run, 90, "detalii", mid=4,
+            entities=[{"type": "text_link", "offset": 0, "length": 7, "url": "https://approape.ro/escorte/ana"}])
+    # Telegram marks a bare "approape.ro/..." as a url entity itself.
+    message(env, run, 91, "Nouă aici, vezi approape.ro/creatoare/ana", mid=5,  # locked, pre-bot
+            entities=[{"type": "url", "offset": 16, "length": 25}])
+    env.bot.delete_message.assert_not_awaited()
+
+
+def test_a_lookalike_domain_is_not_approape(env, run):
+    posting_member(env, run, 90)
+    for mid in (1, 2):
+        message(env, run, 90, "Vezi https://approape.ro.example.com/x", mid=mid)
+    env.bot.delete_message.assert_awaited_once_with(G, 2)
 
 
 def test_gifs_arriving_together_are_still_limited(env, run):

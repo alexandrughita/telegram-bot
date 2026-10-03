@@ -18,7 +18,8 @@ from moderation import build_fingerprint, duplicate_reason, violation_action
 # ------------------------------------------------------------
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "").rstrip("/")
+# Render sets RENDER_EXTERNAL_URL itself, so WEBHOOK_URL is only needed elsewhere.
+WEBHOOK_URL = (os.environ.get("WEBHOOK_URL") or os.environ.get("RENDER_EXTERNAL_URL", "")).rstrip("/")
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 
 # 0 until known: the bot then only answers /chatid, which is how you find them.
@@ -156,6 +157,7 @@ async def maybe_unlock(bot, inviter_id):
         return
     await store.set_unlocked(GROUP_CHAT_ID, inviter_id)
     await allow_posting(bot, GROUP_CHAT_ID, inviter_id)
+    await store.log_event(GROUP_CHAT_ID, inviter_id, "unlock", f"{INVITES_REQUIRED} invitații")
     try:
         await bot.send_message(inviter_id, "✅ Ai adus 3 membri — acum poți posta în grup.")
     except Exception:
@@ -288,6 +290,7 @@ async def punish(bot, message, reason):
     count = await store.add_violation(chat_id, user.id, reason, VIOLATION_WINDOW_HOURS)
     action = violation_action(count)
     log.info("violation user=%s reason=%s count=%s action=%s", user.id, reason, count, action)
+    await store.log_event(chat_id, user.id, action, reason, message.message_id)
     if action == "warn":
         await send_temporary(
             bot, chat_id,
@@ -330,6 +333,8 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await bot.delete_message(message.chat_id, message.message_id)
         except Exception:
             pass
+        await store.log_event(GROUP_CHAT_ID, message.sender_chat.id, "delete", "postare ca un canal",
+                              message.message_id)
         return
 
     user = message.from_user
@@ -346,6 +351,7 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await bot.delete_message(message.chat_id, message.message_id)
         except Exception:
             pass
+        await store.log_event(GROUP_CHAT_ID, user.id, "delete", "fără drept de postare", message.message_id)
         return
 
     fp = fingerprint_of(message)

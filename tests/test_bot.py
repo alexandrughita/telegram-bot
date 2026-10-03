@@ -59,7 +59,7 @@ def run():
 def env(run):
     store = Store(DSN)
     run(store.open())
-    run(store._execute("TRUNCATE members, invite_links, invites, messages, violations, support_threads"))
+    run(store._execute("TRUNCATE members, invite_links, invites, messages, violations, support_threads, moderation_events"))
     bot.store = store
     bot._admin_cache.clear()
     bot._permissions_cache.clear()
@@ -118,6 +118,13 @@ def test_three_joins_through_her_link_unlock_her(env, run):
     join(env, run, 63, link=link)
     assert env.bot.posting_unlocked(50)
     assert run(env.store.get_member(G, 50))["unlocked"]
+    assert events(env, run, 50) == ["unlock"]
+
+
+def events(env, run, uid):
+    rows = run(env.store._all(
+        "SELECT event_type FROM moderation_events WHERE user_id=%s ORDER BY id", (uid,)))
+    return [r["event_type"] for r in rows]
 
 
 def test_one_link_per_person(env, run):
@@ -142,6 +149,7 @@ def test_new_member_is_restricted_and_her_posts_deleted(env, run):
     assert env.bot.restrict_chat_member.call_args.args[1:3] == (80, bot.READ_ONLY)
     message(env, run, 80, "salut")
     env.bot.delete_message.assert_awaited_with(G, 10)
+    assert events(env, run, 80) == ["delete"]
 
 
 def test_member_from_before_the_bot_keeps_posting(env, run):
@@ -174,6 +182,7 @@ def test_repeated_ad_escalates_delete_warn_warn_mute(env, run):
     assert "mute" in notices[2]
     mute = env.bot.restrict_chat_member.call_args
     assert mute.args[1] == 90 and mute.kwargs.get("until_date")
+    assert events(env, run, 90) == ["delete", "warn", "warn", "mute"]
 
 
 def test_second_gif_within_a_minute_is_removed(env, run):

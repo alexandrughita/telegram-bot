@@ -58,6 +58,19 @@ CREATE TABLE IF NOT EXISTS violations (
 );
 CREATE INDEX IF NOT EXISTS idx_violations_user_time ON violations(chat_id, user_id, created_at);
 
+-- Every action the bot takes against someone, kept for good: the answer to
+-- "why was she muted?" weeks later. `violations` above is only the 48h counter.
+CREATE TABLE IF NOT EXISTS moderation_events (
+    id          BIGSERIAL PRIMARY KEY,
+    chat_id     BIGINT NOT NULL,
+    user_id     BIGINT NOT NULL,
+    message_id  BIGINT,
+    event_type  TEXT NOT NULL,   -- delete | warn | mute | unlock
+    reason      TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_moderation_events_user ON moderation_events(chat_id, user_id, created_at);
+
 -- Which private-chat user a message in the support chat belongs to, so an
 -- admin's reply can be sent back to them.
 CREATE TABLE IF NOT EXISTS support_threads (
@@ -184,6 +197,12 @@ class Store:
                WHERE chat_id=%s AND user_id=%s AND created_at >= now() - %s * interval '1 hour'""",
             (chat_id, user_id, window_hours))
         return row["n"]
+
+    async def log_event(self, chat_id, user_id, event_type, reason=None, message_id=None):
+        await self._execute(
+            """INSERT INTO moderation_events(chat_id,user_id,message_id,event_type,reason)
+               VALUES(%s,%s,%s,%s,%s)""",
+            (chat_id, user_id, message_id, event_type, reason))
 
     # ---- support -------------------------------------------------------
     async def save_support_thread(self, support_message_id, user_id):

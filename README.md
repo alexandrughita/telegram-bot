@@ -26,6 +26,12 @@ bot's private chat.
 - Messages posted "as a channel" are deleted; anonymous admins and posts from the linked
   channel are left alone.
 
+Every action (delete, warn, mute, unlock) is logged in `moderation_events` with its reason
+and kept for good, so "why was she muted?" can still be answered weeks later:
+
+    SELECT created_at, event_type, reason FROM moderation_events
+    WHERE user_id = <id> ORDER BY created_at DESC;
+
 **Help desk**
 - `https://t.me/<bot>?start=ajutor` opens the private chat with a help message. That's the
   link the site uses wherever it says "scrie-ne pe Telegram".
@@ -59,7 +65,6 @@ Required:
 
     BOT_TOKEN=token from BotFather
     DATABASE_URL=postgresql://...pooler.supabase.com:6543/postgres
-    WEBHOOK_URL=https://your-service.onrender.com
     WEBHOOK_SECRET=at least 16 random characters
     GROUP_CHAT_ID=-100...        (from /chatid)
     SUPPORT_CHAT_ID=...          (from /chatid)
@@ -74,6 +79,7 @@ Optional (defaults shown):
     VIOLATION_WINDOW_HOURS=48
     MUTE_MINUTES=60
     PORT=10000
+    WEBHOOK_URL=https://...      (not needed on Render: RENDER_EXTERNAL_URL is used)
 
 ## Render Free
 

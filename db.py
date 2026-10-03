@@ -66,11 +66,20 @@ CREATE TABLE IF NOT EXISTS moderation_events (
     chat_id     BIGINT NOT NULL,
     user_id     BIGINT NOT NULL,
     message_id  BIGINT,
-    event_type  TEXT NOT NULL,   -- delete | warn | mute | unlock
+    event_type  TEXT NOT NULL,   -- delete | warn | mute | unlock | whitelist | unwhitelist
     reason      TEXT,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_moderation_events_user ON moderation_events(chat_id, user_id, created_at);
+
+-- Members an admin exempted from every rule with /whitelist.
+CREATE TABLE IF NOT EXISTS whitelist (
+    chat_id     BIGINT NOT NULL,
+    user_id     BIGINT NOT NULL,
+    added_by    BIGINT NOT NULL,
+    added_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (chat_id, user_id)
+);
 
 -- The bot's own scheduled posts: when, what kind, and which profile/question,
 -- so nothing is repeated too soon.
@@ -242,6 +251,22 @@ class Store:
         row = await self._one(
             "SELECT user_id FROM support_threads WHERE support_message_id=%s", (support_message_id,))
         return row["user_id"] if row else None
+
+    # ---- whitelist -----------------------------------------------------
+    async def is_whitelisted(self, chat_id, user_id):
+        row = await self._one(
+            "SELECT 1 AS x FROM whitelist WHERE chat_id=%s AND user_id=%s", (chat_id, user_id))
+        return row is not None
+
+    async def add_whitelist(self, chat_id, user_id, added_by):
+        await self._execute(
+            "INSERT INTO whitelist(chat_id,user_id,added_by) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING",
+            (chat_id, user_id, added_by))
+
+    async def remove_whitelist(self, chat_id, user_id):
+        cur = await self._execute(
+            "DELETE FROM whitelist WHERE chat_id=%s AND user_id=%s", (chat_id, user_id))
+        return cur.rowcount == 1
 
     # ---- scheduled posts -----------------------------------------------
     async def get_time(self, key):

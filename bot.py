@@ -191,17 +191,21 @@ async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await store.add_member(GROUP_CHAT_ID, user, unlocked=True)
         return
 
+    whitelisted = await store.is_whitelisted(GROUP_CHAT_ID, user.id)
     existing = await store.get_member(GROUP_CHAT_ID, user.id)
     if existing:
         # Coming back: restore what she had, and no invite credit for anyone.
-        if existing["unlocked"]:
+        if existing["unlocked"] or whitelisted:
             await allow_posting(bot, GROUP_CHAT_ID, user.id)
         else:
             await restrict(bot, GROUP_CHAT_ID, user.id)
         return
 
     await store.add_member(GROUP_CHAT_ID, user)
-    await restrict(bot, GROUP_CHAT_ID, user.id)
+    if whitelisted:
+        await allow_posting(bot, GROUP_CHAT_ID, user.id)
+    else:
+        await restrict(bot, GROUP_CHAT_ID, user.id)
 
     # Only the bot's personal links count. Someone added by hand, or through
     # a link the bot did not create, is credited to nobody.
@@ -230,6 +234,9 @@ async def invite_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if membership.status in ADMIN_STATUSES:
         await update.effective_message.reply_text("Ești admin în grup — poți posta oricând.")
+        return
+    if await store.is_whitelisted(GROUP_CHAT_ID, user.id):
+        await update.effective_message.reply_text("Ești pe lista albă a grupului — poți posta oricând.")
         return
 
     member = await store.get_member(GROUP_CHAT_ID, user.id)
@@ -387,6 +394,8 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = message.from_user
     if not user or user.is_bot or await is_admin(bot, GROUP_CHAT_ID, user.id):
         return
+    if await store.is_whitelisted(GROUP_CHAT_ID, user.id):
+        return  # exempted by an admin with /whitelist
 
     fp = fingerprint_of(message)
     if links_to_approape(fp.urls):
@@ -548,6 +557,44 @@ async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(f"chat id: {chat.id}")
 
 
+def whitelist_target(message, args):
+    """(user_id, display name) from the replied-to message, or from an id argument."""
+    replied = message.reply_to_message
+    if replied and replied.from_user and not replied.from_user.is_bot and not replied.sender_chat:
+        return replied.from_user.id, replied.from_user.mention_html()
+    if args and args[0].lstrip("-").isdigit():
+        return int(args[0]), f"id {args[0]}"
+    return None, None
+
+
+async def cmd_whitelist(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/whitelist or /unwhitelist, by an admin, as a reply to the person or with her id."""
+    message, bot = update.effective_message, context.bot
+    if not await is_admin(bot, GROUP_CHAT_ID, update.effective_user.id):
+        return
+    user_id, name = whitelist_target(message, context.args)
+    adding = message.text.split()[0].split("@")[0].lower() == "/whitelist"
+    if user_id is None:
+        await send_temporary(
+            bot, GROUP_CHAT_ID,
+            f"Dă reply la un mesaj al persoanei cu {'/whitelist' if adding else '/unwhitelist'}, "
+            f"sau scrie id-ul ei după comandă.",
+            NOTICE_TTL_SECONDS)
+        return
+    if adding:
+        await store.add_whitelist(GROUP_CHAT_ID, user_id, update.effective_user.id)
+        # Lifts a lock or a mute she may already be under.
+        await allow_posting(bot, GROUP_CHAT_ID, user_id)
+        await store.log_event(GROUP_CHAT_ID, user_id, "whitelist", f"de {update.effective_user.id}")
+        text = f"✅ {name} e pe lista albă: nicio regulă a botului nu i se mai aplică."
+    elif await store.remove_whitelist(GROUP_CHAT_ID, user_id):
+        await store.log_event(GROUP_CHAT_ID, user_id, "unwhitelist", f"de {update.effective_user.id}")
+        text = f"{name} nu mai e pe lista albă: regulele obișnuite i se aplică din nou."
+    else:
+        text = f"{name} nu era pe lista albă."
+    await send_temporary(bot, GROUP_CHAT_ID, text, NOTICE_TTL_SECONDS)
+
+
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(context.bot, GROUP_CHAT_ID, update.effective_user.id):
         return
@@ -564,6 +611,7 @@ def build_application():
 
     application.add_handler(CommandHandler("chatid", cmd_chatid))
     application.add_handler(CommandHandler("stats", cmd_stats, filters=group))
+    application.add_handler(CommandHandler(["whitelist", "unwhitelist"], cmd_whitelist, filters=group))
     application.add_handler(CommandHandler("start", cmd_start, filters=private))
     application.add_handler(CommandHandler(["invite", "status"], invite_status, filters=private))
     application.add_handler(CommandHandler(["invite", "status"], cmd_group_redirect, filters=group))

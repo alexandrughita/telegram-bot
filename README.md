@@ -17,6 +17,12 @@ bot's private chat.
   `legacy`): their first post is deleted, they are restricted and shown their link.
 - An unlocked member who leaves and comes back can post again straight away.
 
+**Whitelist**
+- An admin replies to someone's message with `/whitelist` (or writes `/whitelist <id>`, for
+  someone who cannot post yet): no rule of the bot applies to her any more, the invite
+  requirement included, and any lock or mute she is under is lifted. She does not become an
+  admin. `/unwhitelist` brings the normal rules back. Both are logged in `moderation_events`.
+
 **Moderation** (for everyone except the group's admins, read live from Telegram)
 - A message containing a link to **approape.ro** (or a subdomain, including a link hidden
   behind text) is exempt from every rule below and from the invite requirement. A member
@@ -68,6 +74,7 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
 | `/start`, `/invite`, `/status` | private | anyone — personal link + progress |
 | `/invite`, `/status` | group | button to the private chat |
 | `/stats` | group | admins |
+| `/whitelist`, `/unwhitelist` | group, as a reply to the person or with her id | admins |
 | `/chatid` | anywhere | group admins / anyone in private |
 
 ## Setup

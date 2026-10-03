@@ -61,7 +61,7 @@ def run():
 def env(run):
     store = Store(DSN)
     run(store.open())
-    run(store._execute("TRUNCATE members, invite_links, invites, messages, violations, support_threads, moderation_events, bot_posts, bot_state"))
+    run(store._execute("TRUNCATE members, invite_links, invites, messages, violations, support_threads, moderation_events, bot_posts, bot_state, whitelist"))
     bot.store = store
     bot._admin_cache.clear()
     bot._permissions_cache.clear()
@@ -430,3 +430,56 @@ def test_tick_endpoint_refuses_without_the_secret(monkeypatch):
     client = TestClient(bot.app)
     assert client.get("/tick").status_code == 403
     assert client.get("/tick", headers={"X-Tick-Secret": "wrong"}).status_code == 403
+
+
+# ---- whitelist ------------------------------------------------------------
+def group_command(env, run, uid, text, reply_to_uid=None):
+    msg = {"message_id": 30, "date": 0, "from": user(uid), "text": text,
+           "chat": {"id": G, "type": "supergroup"},
+           "entities": [{"type": "bot_command", "offset": 0, "length": len(text.split()[0])}]}
+    if reply_to_uid:
+        msg["reply_to_message"] = {"message_id": 29, "date": 0, "from": user(reply_to_uid),
+                                   "chat": {"id": G, "type": "supergroup"}, "text": "hei"}
+    upd = Update.de_json({"update_id": 6, "message": msg}, None)
+    run(bot.cmd_whitelist(upd, SimpleNamespace(bot=env.bot, args=text.split()[1:])))
+
+
+def test_whitelisted_member_skips_every_rule(env, run):
+    group_command(env, run, ADMIN_ID, "/whitelist", reply_to_uid=90)
+    assert env.bot.posting_unlocked(90)  # a lock or mute she had is lifted
+    for mid in range(1, 5):  # locked pre-bot member, repeated ad, phone number
+        message(env, run, 90, "Același anunț, sună 0722123456", mid=mid)
+    env.bot.delete_message.assert_not_awaited()
+    assert events(env, run, 90) == ["whitelist"]
+
+
+def test_unwhitelist_brings_the_rules_back(env, run):
+    group_command(env, run, ADMIN_ID, "/whitelist 90")
+    group_command(env, run, ADMIN_ID, "/unwhitelist", reply_to_uid=90)
+    message(env, run, 90, "salut")  # never earned her invites: deleted again
+    env.bot.delete_message.assert_awaited_with(G, 10)
+    assert events(env, run, 90)[:2] == ["whitelist", "unwhitelist"]
+
+
+def test_only_admins_can_whitelist(env, run):
+    group_command(env, run, 91, "/whitelist", reply_to_uid=91)
+    assert not run(env.store.is_whitelisted(G, 91))
+
+
+def test_whitelist_without_a_target_explains_how(env, run):
+    group_command(env, run, ADMIN_ID, "/whitelist")
+    assert "Dă reply" in env.bot.send_message.call_args.args[1]
+
+
+def test_whitelisted_person_joining_can_post_straight_away(env, run):
+    group_command(env, run, ADMIN_ID, "/whitelist 95")
+    env.bot.restrict_chat_member.reset_mock()
+    join(env, run, 95)
+    assert env.bot.posting_unlocked(95)
+    assert not any(c.args[2] is bot.READ_ONLY for c in env.bot.restrict_chat_member.call_args_list)
+
+
+def test_whitelisted_private_status(env, run):
+    group_command(env, run, ADMIN_ID, "/whitelist 96")
+    run(bot.invite_status(private_command(env, run, 96, "/status"), env.ctx))
+    assert "lista albă" in env.bot.send_message.call_args.kwargs["text"]

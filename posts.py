@@ -14,9 +14,10 @@ import httpx
 
 SITE = "https://www.approape.ro"
 LOCAL_TZ = ZoneInfo("Europe/Bucharest")
-# Posts only between these local hours, 2–3 a day.
+# Posts only from 10:00 to 01:00 local time (quiet 01:00–10:00), 2–3 a day.
+# The window crosses midnight, so DAY_END_HOUR is smaller than DAY_START_HOUR.
 DAY_START_HOUR = 10
-DAY_END_HOUR = 23
+DAY_END_HOUR = 1
 MIN_GAP = timedelta(hours=3)
 MAX_GAP = timedelta(hours=6)
 NEW_PROFILE_DAYS = 30
@@ -62,8 +63,10 @@ class Profile:
 # When to post
 # ------------------------------------------------------------
 def _in_day_window(moment):
-    local = moment.astimezone(LOCAL_TZ)
-    return DAY_START_HOUR <= local.hour < DAY_END_HOUR
+    hour = moment.astimezone(LOCAL_TZ).hour
+    if DAY_START_HOUR < DAY_END_HOUR:
+        return DAY_START_HOUR <= hour < DAY_END_HOUR
+    return hour >= DAY_START_HOUR or hour < DAY_END_HOUR
 
 
 def next_post_time(now, rng=random):

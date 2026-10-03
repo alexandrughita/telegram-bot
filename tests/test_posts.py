@@ -28,8 +28,13 @@ def test_next_post_is_three_to_six_hours_later_in_daytime():
     assert posts.next_post_time(local(10), FixedRandom(0.999999)).astimezone(posts.LOCAL_TZ).hour == 15
 
 
-def test_next_post_that_would_land_at_night_moves_to_the_next_morning():
-    nxt = posts.next_post_time(local(21), FixedRandom(0)).astimezone(posts.LOCAL_TZ)  # 00:00 -> morning
+def test_posts_may_land_until_one_in_the_morning():
+    nxt = posts.next_post_time(local(21), FixedRandom(0)).astimezone(posts.LOCAL_TZ)  # 00:00 stays
+    assert (nxt.day, nxt.hour) == (6, 0)
+
+
+def test_next_post_that_would_land_in_quiet_hours_moves_to_ten():
+    nxt = posts.next_post_time(local(23), FixedRandom(0)).astimezone(posts.LOCAL_TZ)  # 02:00 -> 10:00
     assert (nxt.day, nxt.hour) == (6, 10)
     nxt = posts.next_post_time(local(1), FixedRandom(0.5)).astimezone(posts.LOCAL_TZ)  # 05:30 -> same day
     assert (nxt.day, nxt.hour) == (5, 11)
@@ -40,7 +45,8 @@ def test_posts_land_in_daytime_whatever_the_dice_say():
     now = local(9)
     for _ in range(200):
         now = posts.next_post_time(now, rng)
-        assert posts.DAY_START_HOUR <= now.astimezone(posts.LOCAL_TZ).hour < posts.DAY_END_HOUR
+        hour = now.astimezone(posts.LOCAL_TZ).hour
+        assert hour >= 10 or hour < 1
 
 
 def test_due_needs_the_time_daylight_and_someone_who_wrote_since():
@@ -48,7 +54,9 @@ def test_due_needs_the_time_daylight_and_someone_who_wrote_since():
     earlier = now - timedelta(hours=1)
     assert posts.due(now, earlier, last_post_at=None, last_human_at=earlier)
     assert not posts.due(now, now + timedelta(minutes=1), None, earlier)       # not yet
-    assert not posts.due(local(2), local(1), None, local(1))                    # night
+    assert not posts.due(local(2), local(1), None, local(1))                    # quiet hours
+    assert not posts.due(local(9, 59), local(1), None, local(1))
+    assert posts.due(local(0, 30), local(0), None, local(0, 10))                # still allowed
     assert not posts.due(now, earlier, last_post_at=earlier, last_human_at=earlier - timedelta(minutes=5))
     assert not posts.due(now, earlier, None, last_human_at=None)                # nobody ever wrote
 

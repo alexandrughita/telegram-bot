@@ -55,7 +55,7 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
 - Anything written to the bot privately reaches `SUPPORT_CHAT_ID`. An admin's **reply**
   to that message goes back to the person.
 
-**Scheduled posts** (2–3 a day, between 10:00 and 23:00 Bucharest time)
+**Scheduled posts** (2–3 a day, between 10:00 and 01:00 Bucharest time; quiet 01:00–10:00)
 - Profiles and questions alternate. For a profile, the bot tries in this order: a profile
   created in the last 30 days, last week's most viewed profile (`/api/top-weekly`), or a
   recommended one (claimed by its owner, recently updated). It posts the main photo, the

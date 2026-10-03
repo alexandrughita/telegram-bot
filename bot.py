@@ -63,6 +63,7 @@ FALLBACK_POSTING = ChatPermissions(
 
 _admin_cache = {}        # chat_id -> (expires_at, set of admin ids)
 _permissions_cache = {}  # chat_id -> (expires_at, ChatPermissions)
+_site_handles = None     # (expires_at, set of usernames published on approape.ro profiles)
 _support_ack_at = {}     # user_id -> last time we acknowledged a help message
 _background = set()      # strong refs to fire-and-forget tasks
 # Telegram delivers updates over parallel webhook requests (a whole backlog at once
@@ -143,6 +144,32 @@ async def allow_posting(bot, chat_id, user_id):
         log.warning("Could not unlock %s: %s", user_id, exc)
 
 
+async def linked_on_site(user):
+    """Her Telegram username is published on an approape.ro profile."""
+    global _site_handles
+    if not user.username:
+        return False
+    if not _site_handles or _site_handles[0] < time.monotonic():
+        try:
+            handles = await posts.fetch_telegram_handles()
+        except Exception as exc:
+            # Fails closed: she is then held to the invite rule like everyone else.
+            log.warning("Could not read Telegram handles from the site: %s", exc)
+            handles = set()
+        _site_handles = (time.monotonic() + CACHE_TTL_SECONDS, handles)
+    return user.username.lower() in _site_handles[1]
+
+
+async def unlock_for_site_profile(bot, user):
+    """Unlocks a member whose Telegram is on her approape.ro profile. True if it did."""
+    if not await linked_on_site(user):
+        return False
+    await store.set_unlocked(GROUP_CHAT_ID, user.id)
+    await allow_posting(bot, GROUP_CHAT_ID, user.id)
+    await store.log_event(GROUP_CHAT_ID, user.id, "unlock", "Telegram pe profilul approape.ro")
+    return True
+
+
 # ------------------------------------------------------------
 # Invite system
 # ------------------------------------------------------------
@@ -160,8 +187,11 @@ async def personal_link(bot, user_id):
     return created.invite_link
 
 
-async def maybe_unlock(bot, inviter_id):
+async def maybe_unlock(bot, inviter_id, inviter=None):
     member = await store.get_member(GROUP_CHAT_ID, inviter_id)
+    if member is None and inviter:
+        # Added people by hand before the bot ever saw her: she was there before it.
+        member = await store.add_member(GROUP_CHAT_ID, inviter, legacy=True)
     if not member or member["unlocked"]:
         return
     if await store.invite_count(GROUP_CHAT_ID, inviter_id) < INVITES_REQUIRED:
@@ -197,28 +227,34 @@ async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Coming back: restore what she had, and no invite credit for anyone.
         if existing["unlocked"] or whitelisted:
             await allow_posting(bot, GROUP_CHAT_ID, user.id)
-        else:
+        elif not await unlock_for_site_profile(bot, user):
             await restrict(bot, GROUP_CHAT_ID, user.id)
         return
 
     await store.add_member(GROUP_CHAT_ID, user)
+    can_post = whitelisted or await unlock_for_site_profile(bot, user)
     if whitelisted:
         await allow_posting(bot, GROUP_CHAT_ID, user.id)
-    else:
+    elif not can_post:
         await restrict(bot, GROUP_CHAT_ID, user.id)
 
-    # Only the bot's personal links count. Someone added by hand, or through
-    # a link the bot did not create, is credited to nobody.
+    # Credited: whoever owns the bot link she joined through, or whoever added her by
+    # hand. A link the bot did not create is credited to nobody.
+    inviter_id, inviter = None, None
     if cm.invite_link:
         inviter_id = await store.inviter_for_link(GROUP_CHAT_ID, cm.invite_link.invite_link)
-        if inviter_id and inviter_id != user.id:
-            if await store.record_invite(GROUP_CHAT_ID, user.id, inviter_id):
-                await maybe_unlock(bot, inviter_id)
+    elif cm.from_user and cm.from_user.id != user.id and not cm.from_user.is_bot:
+        inviter_id, inviter = cm.from_user.id, cm.from_user
+    if inviter_id and inviter_id != user.id:
+        if await store.record_invite(GROUP_CHAT_ID, user.id, inviter_id):
+            await maybe_unlock(bot, inviter_id, inviter)
 
+    if can_post:
+        return  # no welcome asking her for invites she does not need
     await send_temporary(
         bot, GROUP_CHAT_ID,
         f"Bun venit, {user.mention_html()}! Ca să poți posta, adu {INVITES_REQUIRED} membri "
-        f"prin linkul tău personal.",
+        f"prin linkul tău personal sau pune-ți Telegramul pe profilul tău de pe approape.ro.",
         WELCOME_TTL_SECONDS, reply_markup=invite_button(bot))
 
 
@@ -244,6 +280,10 @@ async def invite_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # In the group, but the bot never saw her join: she was there before it.
         # She still needs her invites, like everyone else.
         member = await store.add_member(GROUP_CHAT_ID, user, legacy=True)
+    if not member["unlocked"] and await unlock_for_site_profile(bot, user):
+        await update.effective_message.reply_text(
+            "✅ Telegramul tău e pe profilul tău de pe approape.ro — acum poți posta în grup.")
+        return
 
     try:
         link = await personal_link(bot, user.id)
@@ -255,7 +295,9 @@ async def invite_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if member["unlocked"]:
         state = "✅ Poți posta în grup."
     else:
-        state = f"Mai ai nevoie de {INVITES_REQUIRED - count} ca să poți posta."
+        state = (f"Mai ai nevoie de {INVITES_REQUIRED - count} ca să poți posta. Sau pune-ți "
+                 f"Telegramul (@{user.username or 'numele_tău'}) pe profilul tău de pe approape.ro "
+                 f"și scrie-mi din nou /start.")
     await update.effective_message.reply_text(
         f"🔗 Linkul tău:\n{link}\n\n👥 Invitații: {min(count, INVITES_REQUIRED)}/{INVITES_REQUIRED}\n{state}",
         disable_web_page_preview=True)
@@ -407,7 +449,7 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # The bot never saw her join, so she was in the group before it. She still
             # needs her invites; Telegram has not restricted her yet, so that happens below.
             member = await store.add_member(GROUP_CHAT_ID, user, legacy=True)
-        if not member["unlocked"]:
+        if not member["unlocked"] and not await unlock_for_site_profile(bot, user):
             try:
                 await bot.delete_message(message.chat_id, message.message_id)
             except Exception:
@@ -417,7 +459,7 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_temporary(
                 bot, GROUP_CHAT_ID,
                 f"{user.mention_html()}, ca să poți posta, adu {INVITES_REQUIRED} membri "
-                f"prin linkul tău personal.",
+                f"prin linkul tău personal sau pune-ți Telegramul pe profilul tău de pe approape.ro.",
                 NOTICE_TTL_SECONDS, reply_markup=invite_button(bot))
             return
 

@@ -10,8 +10,15 @@ bot's private chat.
 - Each person has **one** personal link. They get it in the private chat with the bot:
   a button in the welcome message, or `/invite` in the private chat. A read-only member
   cannot type anything in the group, so the link can only be delivered there.
-- Only joins through the bot's personal links count. A member added by hand, a rejoin,
-  yourself, or a bot never counts. A person counts once, for whoever brought them first.
+- A join counts for whoever brought the person in: through her personal link, or by
+  adding them by hand ("Add members"). A rejoin, yourself, a bot, or a link the bot did
+  not create never counts. A person counts once, for whoever brought them first.
+- **No invites needed if her Telegram is on her approape.ro profile**: a member whose
+  Telegram username is in the `telegramLink` field of a profile that is not hidden,
+  deleted or banned can post right away. Checked on joining, on her first post, and on
+  `/start` in the private chat (so someone already locked can add it and unlock herself).
+  The list of usernames is read from Firestore and cached for 5 minutes; if it cannot be
+  read, the invite rule applies. Members without a Telegram username cannot match.
 - An invite counts **for good**, even if the invited person leaves later.
 - Members who were in the group **before** the bot need their 3 invites too (marked
   `legacy`): their first post is deleted, they are restricted and shown their link.

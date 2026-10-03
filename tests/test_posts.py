@@ -122,3 +122,12 @@ def test_away_hidden_or_inactive_profiles_are_skipped():
 def test_sitemap_paths():
     xml = "<url><loc>https://www.approape.ro/escorte/ana</loc></url><url><loc>https://www.approape.ro/creatoare/bia</loc></url>"
     assert posts.sitemap_paths(xml) == {"/escorte/ana", "/creatoare/bia"}
+
+
+def test_telegram_handle_reads_every_way_a_profile_writes_it():
+    for raw in ("@Ana_99", "Ana_99", "https://t.me/ana_99", "t.me/ana_99/", "telegram.me/Ana_99?x=1",
+                " https://www.t.me/ana_99 "):
+        assert posts.telegram_handle(raw) == "ana_99", raw
+    for raw in ("t.me/+abcDEF123", "+40712345678", "https://t.me/joinchat/xyz", "ana", "", None):
+        assert posts.telegram_handle(raw) is None, raw
+

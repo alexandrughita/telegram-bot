@@ -38,6 +38,8 @@ class FakeBot:
         self.get_chat_administrators = AsyncMock(
             return_value=[SimpleNamespace(user=SimpleNamespace(id=ADMIN_ID))])
         self.get_chat_member = AsyncMock(return_value=SimpleNamespace(status="member"))
+        self.send_photo = AsyncMock()
+        self.send_poll = AsyncMock()
 
     async def create_chat_invite_link(self, chat_id, name):
         self.links += 1
@@ -59,12 +61,13 @@ def run():
 def env(run):
     store = Store(DSN)
     run(store.open())
-    run(store._execute("TRUNCATE members, invite_links, invites, messages, violations, support_threads, moderation_events"))
+    run(store._execute("TRUNCATE members, invite_links, invites, messages, violations, support_threads, moderation_events, bot_posts, bot_state"))
     bot.store = store
     bot._admin_cache.clear()
     bot._permissions_cache.clear()
     bot._support_ack_at.clear()
     bot._moderation_lock = asyncio.Lock()  # each test runs on its own event loop
+    bot._tick_lock = asyncio.Lock()
     fake = FakeBot()
     yield SimpleNamespace(bot=fake, store=store, ctx=SimpleNamespace(bot=fake, args=[]))
     run(asyncio.sleep(0))
@@ -334,3 +337,96 @@ def test_plain_help_link_does_not_alert_support(env, run):
 def test_unknown_start_payload_shows_invite_status(env, run):
     start(env, run, 42, "invite")
     assert "Linkul tău" in env.bot.send_message.call_args.kwargs["text"]
+
+
+# ---- scheduled posts ----------------------------------------------------
+from datetime import datetime, timedelta, timezone
+
+import posts
+
+
+class FakeHttp:
+    """Stands in for httpx.AsyncClient when the bot downloads a profile photo."""
+    def __init__(self, *a, **k):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def get(self, url):
+        return SimpleNamespace(content=b"webp-bytes", raise_for_status=lambda: None)
+
+
+@pytest.fixture
+def daytime(monkeypatch):
+    """Freeze 'now' at 14:00 in Bucharest and serve one recommended profile."""
+    now = datetime(2026, 10, 5, 14, 0, tzinfo=posts.LOCAL_TZ).astimezone(timezone.utc)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return now
+
+    monkeypatch.setattr(bot, "datetime", Clock)
+    monkeypatch.setattr(bot.httpx, "AsyncClient", FakeHttp)
+    rec = posts.Profile("/escorte/ana", "Ana", "Cluj", "https://x/ana.webp")
+
+    async def fake_site(_now):
+        return [], None, [rec]
+    monkeypatch.setattr(posts, "fetch_site_profiles", fake_site)
+    return now
+
+
+def test_tick_plans_first_then_posts_profile_then_question(env, run, daytime):
+    run(bot.run_tick(env.bot))  # first tick only plans
+    env.bot.send_photo.assert_not_awaited()
+    run(env.store.set_time("next_post_at", daytime - timedelta(minutes=1)))
+    run(env.store.set_time("last_human_at", daytime - timedelta(minutes=5)))
+
+    run(bot.run_tick(env.bot))
+    photo = env.bot.send_photo.call_args
+    assert photo.kwargs["photo"] == b"webp-bytes" and "/escorte/ana" in photo.kwargs["caption"]
+    nxt = run(env.store.get_time("next_post_at"))
+    assert timedelta(hours=3) <= nxt - daytime <= timedelta(hours=6)
+
+    # Nobody has written since: the next due moment passes in silence.
+    run(env.store.set_time("next_post_at", daytime - timedelta(minutes=1)))
+    run(bot.run_tick(env.bot))
+    assert env.bot.send_photo.await_count == 1 and env.bot.send_message.await_count == 0
+    env.bot.send_poll.assert_not_awaited()
+
+    # Someone writes: the next post is a question, not another profile.
+    run(env.store.set_time("last_human_at", daytime + timedelta(seconds=1)))
+    run(bot.run_tick(env.bot))
+    assert env.bot.send_poll.await_count + env.bot.send_message.await_count == 1
+    kinds = run(env.store._all("SELECT kind FROM bot_posts ORDER BY id"))
+    assert [k["kind"] for k in kinds] == ["recommended", "question"]
+
+
+def test_profile_posted_recently_is_not_repeated(env, run, daytime):
+    # Ana was posted 2h ago and the last post was a question, so a profile is next.
+    two_hours_ago = datetime.now(timezone.utc) - timedelta(hours=2)
+    run(env.store.record_post(G, "recommended", "/escorte/ana", two_hours_ago))
+    run(env.store.record_post(G, "question", "0", two_hours_ago))
+    run(env.store.set_time("next_post_at", daytime - timedelta(minutes=1)))
+    run(env.store.set_time("last_human_at", daytime))
+
+    run(bot.run_tick(env.bot))
+    env.bot.send_photo.assert_not_awaited()  # ana is the only profile and was just posted
+    assert env.bot.send_poll.await_count + env.bot.send_message.await_count == 1
+
+
+def test_group_message_marks_people_as_active(env, run):
+    message(env, run, ADMIN_ID, "salut")
+    assert run(env.store.get_time("last_human_at")) is not None
+
+
+def test_tick_endpoint_refuses_without_the_secret(monkeypatch):
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(bot, "TICK_SECRET", "s" * 20)
+    client = TestClient(bot.app)
+    assert client.get("/tick").status_code == 403
+    assert client.get("/tick", headers={"X-Tick-Secret": "wrong"}).status_code == 403

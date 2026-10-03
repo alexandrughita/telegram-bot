@@ -5,6 +5,7 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
+import httpx
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from telegram import ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, Update
@@ -12,6 +13,7 @@ from telegram.ext import Application, ChatMemberHandler, CommandHandler, Context
 
 from db import Store
 from moderation import build_fingerprint, duplicate_reason, links_to_approape, violation_action
+import posts
 
 # ------------------------------------------------------------
 # Configuration
@@ -21,6 +23,8 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 # Render sets RENDER_EXTERNAL_URL itself, so WEBHOOK_URL is only needed elsewhere.
 WEBHOOK_URL = (os.environ.get("WEBHOOK_URL") or os.environ.get("RENDER_EXTERNAL_URL", "")).rstrip("/")
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
+# Shared with the external cron that calls /tick; scheduled posts are off without it.
+TICK_SECRET = os.environ.get("TICK_SECRET", "")
 
 # 0 until known: the bot then only answers /chatid, which is how you find them.
 GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID") or 0)
@@ -65,6 +69,7 @@ _background = set()      # strong refs to fire-and-forget tasks
 # when Render wakes up). Each check reads what earlier messages saved, so group
 # messages are moderated one at a time or a burst slips through unchecked.
 _moderation_lock = asyncio.Lock()
+_tick_lock = asyncio.Lock()
 _last_cleanup = 0.0
 
 
@@ -363,6 +368,9 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not message or message.chat_id != GROUP_CHAT_ID or message.is_automatic_forward:
         return  # automatic forwards are posts from the group's linked channel
     bot = context.bot
+    if message.from_user and not message.from_user.is_bot:
+        # Scheduled posts wait for this, so the bot never talks into an empty room.
+        await store.set_time("last_human_at", datetime.now(timezone.utc))
 
     if message.sender_chat:
         if message.sender_chat.id == GROUP_CHAT_ID:
@@ -474,6 +482,62 @@ async def on_support_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ------------------------------------------------------------
+# Scheduled posts (driven by /tick)
+# ------------------------------------------------------------
+async def post_profile(bot, kind, profile):
+    caption = posts.profile_caption(kind, profile)
+    try:
+        # Downloaded rather than passed as a URL: the site's photos are WebP, which
+        # Telegram handles reliably as an upload.
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(profile.photo)
+            resp.raise_for_status()
+        await bot.send_photo(GROUP_CHAT_ID, photo=resp.content, caption=caption, parse_mode="HTML")
+    except Exception as exc:
+        log.warning("Photo post failed (%s); posting the link instead", exc)
+        await bot.send_message(GROUP_CHAT_ID, caption, parse_mode="HTML")
+
+
+async def post_question(bot, index):
+    question = posts.QUESTIONS[index]
+    if "poll" in question:
+        await bot.send_poll(GROUP_CHAT_ID, question["poll"], question["options"], is_anonymous=True)
+    else:
+        await bot.send_message(GROUP_CHAT_ID, question["text"])
+
+
+async def run_tick(bot):
+    """Post if it is time; otherwise do nothing. Called by the external cron."""
+    async with _tick_lock:
+        now = datetime.now(timezone.utc)
+        next_at = await store.get_time("next_post_at")
+        if next_at is None:
+            await store.set_time("next_post_at", posts.next_post_time(now))
+            return
+        last = await store.last_post(GROUP_CHAT_ID)
+        last_human_at = await store.get_time("last_human_at")
+        if not posts.due(now, next_at, last and last["posted_at"], last_human_at):
+            return
+
+        kind = profile = None
+        if last is None or last["kind"] == "question":
+            try:
+                recent = await store.recent_post_refs(GROUP_CHAT_ID, posts.PROFILE_REPEAT_DAYS)
+                kind, profile = posts.pick_profile(*await posts.fetch_site_profiles(now), recent, now)
+            except Exception as exc:
+                log.warning("Could not read profiles from the site: %s", exc)
+        if profile:
+            await post_profile(bot, kind, profile)
+            await store.record_post(GROUP_CHAT_ID, kind, profile.path, now)
+        else:
+            used = await store.recent_post_refs(GROUP_CHAT_ID, 14, question=True)
+            index = posts.pick_question(used)
+            await post_question(bot, index)
+            await store.record_post(GROUP_CHAT_ID, "question", str(index), now)
+        await store.set_time("next_post_at", posts.next_post_time(now))
+
+
+# ------------------------------------------------------------
 # Admin commands
 # ------------------------------------------------------------
 async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -535,6 +599,20 @@ async def telegram_webhook(request: Request):
         return Response(status_code=403)
     update = Update.de_json(await request.json(), tg_app.bot)
     await tg_app.process_update(update)
+    return {"ok": True}
+
+
+@app.api_route("/tick", methods=["GET", "POST"])
+async def tick(request: Request):
+    """Called every few minutes by an external cron: keeps Render awake and drives
+    the scheduled posts."""
+    received = request.headers.get("X-Tick-Secret", "")
+    if not TICK_SECRET or not GROUP_CHAT_ID or not hmac.compare_digest(received, TICK_SECRET):
+        return Response(status_code=403)
+    try:
+        await run_tick(tg_app.bot)
+    except Exception:
+        log.exception("Scheduled post failed")
     return {"ok": True}
 
 

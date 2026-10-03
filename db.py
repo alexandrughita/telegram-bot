@@ -72,6 +72,24 @@ CREATE TABLE IF NOT EXISTS moderation_events (
 );
 CREATE INDEX IF NOT EXISTS idx_moderation_events_user ON moderation_events(chat_id, user_id, created_at);
 
+-- The bot's own scheduled posts: when, what kind, and which profile/question,
+-- so nothing is repeated too soon.
+CREATE TABLE IF NOT EXISTS bot_posts (
+    id          BIGSERIAL PRIMARY KEY,
+    chat_id     BIGINT NOT NULL,
+    kind        TEXT NOT NULL,   -- new | top | recommended | question
+    ref         TEXT NOT NULL,   -- profile path, or question index
+    posted_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_bot_posts_time ON bot_posts(chat_id, posted_at);
+
+-- Small timestamps that must survive Render restarts: when the next post is
+-- planned, and when a person last wrote in the group.
+CREATE TABLE IF NOT EXISTS bot_state (
+    key         TEXT PRIMARY KEY,
+    at          TIMESTAMPTZ NOT NULL
+);
+
 -- Which private-chat user a message in the support chat belongs to, so an
 -- admin's reply can be sent back to them.
 CREATE TABLE IF NOT EXISTS support_threads (
@@ -224,6 +242,34 @@ class Store:
         row = await self._one(
             "SELECT user_id FROM support_threads WHERE support_message_id=%s", (support_message_id,))
         return row["user_id"] if row else None
+
+    # ---- scheduled posts -----------------------------------------------
+    async def get_time(self, key):
+        row = await self._one("SELECT at FROM bot_state WHERE key=%s", (key,))
+        return row["at"] if row else None
+
+    async def set_time(self, key, at):
+        await self._execute(
+            "INSERT INTO bot_state(key,at) VALUES(%s,%s) ON CONFLICT (key) DO UPDATE SET at=EXCLUDED.at",
+            (key, at))
+
+    async def last_post(self, chat_id):
+        return await self._one(
+            "SELECT kind, posted_at FROM bot_posts WHERE chat_id=%s ORDER BY posted_at DESC LIMIT 1",
+            (chat_id,))
+
+    async def recent_post_refs(self, chat_id, days, question=False):
+        rows = await self._all(
+            """SELECT DISTINCT ref FROM bot_posts
+               WHERE chat_id=%s AND (kind='question') = %s
+                 AND posted_at >= now() - %s * interval '1 day'""",
+            (chat_id, question, days))
+        return {r["ref"] for r in rows}
+
+    async def record_post(self, chat_id, kind, ref, posted_at):
+        await self._execute(
+            "INSERT INTO bot_posts(chat_id,kind,ref,posted_at) VALUES(%s,%s,%s,%s)",
+            (chat_id, kind, ref, posted_at))
 
     # ---- housekeeping --------------------------------------------------
     async def cleanup(self, message_hours, violation_days=30):

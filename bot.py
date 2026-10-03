@@ -170,7 +170,7 @@ async def maybe_unlock(bot, inviter_id):
     await allow_posting(bot, GROUP_CHAT_ID, inviter_id)
     await store.log_event(GROUP_CHAT_ID, inviter_id, "unlock", f"{INVITES_REQUIRED} invitații")
     try:
-        await bot.send_message(inviter_id, "✅ Ai adus 3 membri — acum poți posta în grup.")
+        await bot.send_message(inviter_id, f"✅ Ai adus {INVITES_REQUIRED} membri — acum poți posta în grup.")
     except Exception:
         pass  # she never opened a private chat with the bot
 

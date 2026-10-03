@@ -229,11 +229,20 @@ class Store:
         await self._execute(
             "INSERT INTO violations(chat_id,user_id,reason) VALUES(%s,%s,%s)",
             (chat_id, user_id, reason))
+        return await self.violation_count(chat_id, user_id, window_hours)
+
+    async def violation_count(self, chat_id, user_id, window_hours):
         row = await self._one(
             """SELECT COUNT(*) AS n FROM violations
                WHERE chat_id=%s AND user_id=%s AND created_at >= now() - %s * interval '1 hour'""",
             (chat_id, user_id, window_hours))
         return row["n"]
+
+    async def recent_events(self, chat_id, user_id, limit):
+        return await self._all(
+            """SELECT event_type, reason, created_at FROM moderation_events
+               WHERE chat_id=%s AND user_id=%s ORDER BY created_at DESC, id DESC LIMIT %s""",
+            (chat_id, user_id, limit))
 
     async def log_event(self, chat_id, user_id, event_type, reason=None, message_id=None):
         await self._execute(

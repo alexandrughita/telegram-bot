@@ -1,5 +1,6 @@
 import asyncio
 import hmac
+import html
 import logging
 import os
 import time
@@ -9,7 +10,8 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from telegram import ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, Update
-from telegram.ext import Application, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import (Application, CallbackQueryHandler, ChatMemberHandler, CommandHandler, ContextTypes,
+                          MessageHandler, filters)
 
 from db import Store
 from moderation import build_fingerprint, duplicate_reason, links_to_approape, violation_action
@@ -327,12 +329,45 @@ HELP_TOPICS = {
 }
 
 
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    topic = HELP_TOPICS.get(context.args[0]) if context.args else None
-    if not topic:
-        await invite_status(update, context)
-        return
-    reply, support_note = topic
+# The menu /start shows. Each button answers on the spot; only what it cannot answer
+# reaches the support chat, by the person writing to the bot.
+MENU = [
+    ("sms", "📱 Nu primesc SMS-ul"),
+    ("revendicare", "🔑 Revendicare profil"),
+    ("grup", "💬 Cum pot posta în grup"),
+    ("telegram", "✈️ Telegram pe profilul meu"),
+    ("om", "🙋 Vorbește cu un om"),
+]
+MENU_ANSWERS = {
+    "sms": "Când SMS-ul nu vine, intră pe approape.ro cu Google: în fereastra de autentificare "
+           "alege «Continuă cu Google». Durează câteva secunde și îți poți face profilul de acolo.\n\n"
+           "Dacă nici așa nu merge, apasă «Vorbește cu un om».",
+    "telegram": "Pune-ți Telegramul pe profil din approape.ro: «Contul meu» → cardul «Telegram» → "
+                "scrie @numele_tău.\n\nCu Telegramul pe profil poți posta în grup fără invitații: "
+                "după ce l-ai salvat, scrie-mi /start.",
+    "om": "Scrie-ne aici mesajul tău. Îl primește echipa approape.ro și îți răspundem în această conversație.",
+}
+
+
+def menu_keyboard():
+    return InlineKeyboardMarkup([[InlineKeyboardButton(label, callback_data=f"menu:{key}")]
+                                 for key, label in MENU])
+
+
+def answer_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🙋 Vorbește cu un om", callback_data="menu:om")],
+        [InlineKeyboardButton("« Înapoi la meniu", callback_data="menu:meniu")],
+    ])
+
+
+async def show_menu(message):
+    await message.reply_text("Salut! Cu ce te putem ajuta?", reply_markup=menu_keyboard())
+
+
+async def help_topic(update, context, key):
+    """A help topic from the site's links: what to send, and an alert to support."""
+    reply, support_note = HELP_TOPICS[key]
     await update.effective_message.reply_text(reply)
     if support_note and SUPPORT_CHAT_ID:
         user = update.effective_user
@@ -341,6 +376,33 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🆘 {user.full_name}" + (f" (@{user.username})" if user.username else "") + f" · id {user.id}\n"
             f"Vine de pe site: {support_note}. Răspunde cu reply aici.")
         await store.save_support_thread(note.message_id, user.id)
+
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    payload = context.args[0] if context.args else ""
+    if payload == "invite":  # the button in the group's welcome and lock notices
+        await invite_status(update, context)
+    elif payload in HELP_TOPICS:
+        await help_topic(update, context, payload)
+    else:
+        await show_menu(update.effective_message)
+
+
+async def on_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    key = query.data.removeprefix("menu:")
+    if key == "grup":
+        await invite_status(update, context)
+    elif key == "revendicare":
+        # Claiming needs an SMS to the profile's number; when it does not arrive,
+        # only a person can check the profile is hers.
+        await help_topic(update, context, "revendicare")
+    elif key in MENU_ANSWERS:
+        await query.message.reply_text(
+            MENU_ANSWERS[key], reply_markup=None if key == "om" else answer_keyboard())
+    else:
+        await show_menu(query.message)
 
 
 async def cmd_group_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -599,7 +661,7 @@ async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.effective_message.reply_text(f"chat id: {chat.id}")
 
 
-def whitelist_target(message, args):
+def target_user(message, args):
     """(user_id, display name) from the replied-to message, or from an id argument."""
     replied = message.reply_to_message
     if replied and replied.from_user and not replied.from_user.is_bot and not replied.sender_chat:
@@ -614,7 +676,7 @@ async def cmd_whitelist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message, bot = update.effective_message, context.bot
     if not await is_admin(bot, GROUP_CHAT_ID, update.effective_user.id):
         return
-    user_id, name = whitelist_target(message, context.args)
+    user_id, name = target_user(message, context.args)
     adding = message.text.split()[0].split("@")[0].lower() == "/whitelist"
     if user_id is None:
         await send_temporary(
@@ -637,6 +699,77 @@ async def cmd_whitelist(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_temporary(bot, GROUP_CHAT_ID, text, NOTICE_TTL_SECONDS)
 
 
+async def admin_reply(update, bot, text):
+    """In the group the answer vanishes after a minute; in private it stays."""
+    if update.effective_chat.type == "private":
+        await update.effective_message.reply_text(text, parse_mode="HTML")
+    else:
+        await send_temporary(bot, GROUP_CHAT_ID, text, NOTICE_TTL_SECONDS)
+
+
+async def cmd_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/info, by an admin, as a reply to the person or with her id: why she can or cannot post."""
+    message, bot = update.effective_message, context.bot
+    if not await is_admin(bot, GROUP_CHAT_ID, update.effective_user.id):
+        return
+    user_id, name = target_user(message, context.args)
+    if user_id is None:
+        await admin_reply(update, bot, "Dă reply la un mesaj al persoanei cu /info, sau scrie id-ul ei după comandă.")
+        return
+    try:
+        membership = await bot.get_chat_member(GROUP_CHAT_ID, user_id)
+        tg_user, status = membership.user, membership.status
+    except Exception:
+        tg_user, status = None, "necunoscut"
+    member = await store.get_member(GROUP_CHAT_ID, user_id)
+    lines = [f"ℹ️ {name} · id {user_id}" + (f" · @{tg_user.username}" if tg_user and tg_user.username else "")]
+    if await is_admin(bot, GROUP_CHAT_ID, user_id):
+        lines.append("Admin: poate posta oricând.")
+    elif await store.is_whitelisted(GROUP_CHAT_ID, user_id):
+        lines.append("Pe lista albă: poate posta, nicio regulă nu i se aplică.")
+    elif member and member["unlocked"]:
+        lines.append("Poate posta.")
+    else:
+        lines.append("Nu poate posta încă.")
+    lines.append(f"În grup: {status}" + (" · din grup înainte de bot" if member and member["legacy"] else "")
+                 + ("" if member else " · botul n-a văzut-o încă"))
+    lines.append(f"Invitații: {await store.invite_count(GROUP_CHAT_ID, user_id)}/{INVITES_REQUIRED}")
+    on_site = bool(tg_user) and await linked_on_site(tg_user)
+    lines.append(f"Telegram pe un profil approape.ro: {'da' if on_site else 'nu'}")
+    lines.append(f"Abateri în ultimele {VIOLATION_WINDOW_HOURS:g}h: "
+                 f"{await store.violation_count(GROUP_CHAT_ID, user_id, VIOLATION_WINDOW_HOURS)}")
+    events = await store.recent_events(GROUP_CHAT_ID, user_id, 5)
+    if events:
+        lines.append("Ultimele acțiuni:")
+        for e in events:
+            when = e["created_at"].astimezone(posts.LOCAL_TZ).strftime("%d.%m %H:%M")
+            lines.append(f"• {when} {e['event_type']}" + (f" — {html.escape(e['reason'])}" if e["reason"] else ""))
+    await admin_reply(update, bot, "\n".join(lines))
+
+
+async def cmd_unlock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/unlock, by an admin: she may post without her invites. Unlike /whitelist,
+    every other rule still applies to her."""
+    message, bot = update.effective_message, context.bot
+    if not await is_admin(bot, GROUP_CHAT_ID, update.effective_user.id):
+        return
+    user_id, name = target_user(message, context.args)
+    if user_id is None:
+        await admin_reply(update, bot, "Dă reply la un mesaj al persoanei cu /unlock, sau scrie id-ul ei după comandă.")
+        return
+    if not await store.get_member(GROUP_CHAT_ID, user_id):
+        try:
+            tg_user = (await bot.get_chat_member(GROUP_CHAT_ID, user_id)).user
+        except Exception:
+            await admin_reply(update, bot, f"Nu găsesc {name} în grup.")
+            return
+        await store.add_member(GROUP_CHAT_ID, tg_user, legacy=True)
+    await store.set_unlocked(GROUP_CHAT_ID, user_id)
+    await allow_posting(bot, GROUP_CHAT_ID, user_id)  # also lifts a mute
+    await store.log_event(GROUP_CHAT_ID, user_id, "unlock", f"manual, de {update.effective_user.id}")
+    await admin_reply(update, bot, f"✅ {name} poate posta. Celelalte reguli i se aplică în continuare.")
+
+
 async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_admin(context.bot, GROUP_CHAT_ID, update.effective_user.id):
         return
@@ -654,7 +787,10 @@ def build_application():
     application.add_handler(CommandHandler("chatid", cmd_chatid))
     application.add_handler(CommandHandler("stats", cmd_stats, filters=group))
     application.add_handler(CommandHandler(["whitelist", "unwhitelist"], cmd_whitelist, filters=group))
+    application.add_handler(CommandHandler("info", cmd_info, filters=group | private))
+    application.add_handler(CommandHandler("unlock", cmd_unlock, filters=group | private))
     application.add_handler(CommandHandler("start", cmd_start, filters=private))
+    application.add_handler(CallbackQueryHandler(on_menu, pattern=r"^menu:"))
     application.add_handler(CommandHandler(["invite", "status"], invite_status, filters=private))
     application.add_handler(CommandHandler(["invite", "status"], cmd_group_redirect, filters=group))
 
@@ -679,7 +815,8 @@ tg_app = None
 
 @app.get("/")
 async def health():
-    return {"ok": True, "service": "telegram-group-bot"}
+    # Render sets RENDER_GIT_COMMIT: which commit is live, without opening the dashboard.
+    return {"ok": True, "service": "telegram-group-bot", "commit": os.environ.get("RENDER_GIT_COMMIT", "")[:7]}
 
 
 @app.post("/telegram/webhook")
@@ -722,7 +859,7 @@ async def main():
         # Telegram stops sending updates and nothing ever wakes it up again.
         await tg_app.bot.set_webhook(
             url=f"{WEBHOOK_URL}/telegram/webhook", secret_token=WEBHOOK_SECRET,
-            allowed_updates=["message", "chat_member"])
+            allowed_updates=["message", "chat_member", "callback_query"])
         log.info("Webhook set")
     else:
         log.warning("WEBHOOK_URL is not set; no updates will arrive.")

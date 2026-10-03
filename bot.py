@@ -410,6 +410,7 @@ async def on_support_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ------------------------------------------------------------
 async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
+    log.warning("GROUP CHAT ID DETECTED: %s", chat.id)
     if chat.type != "private" and not await is_admin(context.bot, chat.id, update.effective_user.id):
         return
     await update.effective_message.reply_text(f"chat id: {chat.id}")

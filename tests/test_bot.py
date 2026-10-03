@@ -64,6 +64,7 @@ def env(run):
     bot._admin_cache.clear()
     bot._permissions_cache.clear()
     bot._support_ack_at.clear()
+    bot._moderation_lock = asyncio.Lock()  # each test runs on its own event loop
     fake = FakeBot()
     yield SimpleNamespace(bot=fake, store=store, ctx=SimpleNamespace(bot=fake, args=[]))
     run(asyncio.sleep(0))
@@ -96,6 +97,18 @@ def message(env, run, uid, text=None, chat=G, mid=10, **extra):
     handler = bot.on_group_message if chat == G else bot.on_private_message
     run(handler(upd, env.ctx))
     return upd
+
+
+def posting_member(env, run, uid):
+    """A member who has already earned the right to post."""
+    run(env.store.add_member(G, SimpleNamespace(id=uid, username=None, first_name=f"U{uid}"), unlocked=True))
+
+
+def gif_update(uid, mid, unique_id):
+    gif = {"file_id": unique_id, "file_unique_id": unique_id, "width": 1, "height": 1, "duration": 1}
+    return Update.de_json({"update_id": mid, "message": {
+        "message_id": mid, "date": 0, "from": user(uid), "chat": {"id": G, "type": "supergroup"},
+        "animation": gif, "document": {"file_id": unique_id, "file_unique_id": unique_id}}}, None)
 
 
 def private_command(env, run, uid, text):
@@ -152,14 +165,29 @@ def test_new_member_is_restricted_and_her_posts_deleted(env, run):
     assert events(env, run, 80) == ["delete"]
 
 
-def test_member_from_before_the_bot_keeps_posting(env, run):
+def test_member_from_before_the_bot_is_locked_until_three_invites(env, run):
     message(env, run, 90, "Bună tuturor, sunt aici de mult timp")
-    env.bot.delete_message.assert_not_awaited()
-    assert run(env.store.get_member(G, 90))["legacy"]
+    env.bot.delete_message.assert_awaited_with(G, 10)
+    assert env.bot.restrict_chat_member.call_args.args[1:3] == (90, bot.READ_ONLY)
+    assert "3 membri" in env.bot.send_message.call_args.args[1]
+    member = run(env.store.get_member(G, 90))
+    assert member["legacy"] and not member["unlocked"]
+
+    run(bot.invite_status(private_command(env, run, 90, "/invite"), env.ctx))
+    link = run(env.store.get_invite_link(G, 90))
+    for invited in (91, 92, 93):
+        join(env, run, invited, link=link)
+    assert env.bot.posting_unlocked(90)
+
+
+def test_member_from_before_the_bot_asking_for_her_link_is_still_locked(env, run):
+    run(bot.invite_status(private_command(env, run, 90, "/invite"), env.ctx))
+    assert not run(env.store.get_member(G, 90))["unlocked"]
+    assert "Mai ai nevoie de 3" in env.bot.send_message.call_args.kwargs["text"]
 
 
 def test_unlocked_member_who_rejoins_can_post_again(env, run):
-    message(env, run, 90, "prima postare")  # legacy -> unlocked
+    posting_member(env, run, 90)
     join(env, run, 90)
     assert env.bot.posting_unlocked(90)
 
@@ -171,6 +199,7 @@ def test_admin_is_never_moderated_even_untracked(env, run):
 
 
 def test_repeated_ad_escalates_delete_warn_warn_mute(env, run):
+    posting_member(env, run, 90)
     message(env, run, 90, "Anunț: sună 0722123456", mid=1)
     env.bot.send_message.reset_mock()
     for mid in range(2, 6):
@@ -186,6 +215,7 @@ def test_repeated_ad_escalates_delete_warn_warn_mute(env, run):
 
 
 def test_second_gif_within_a_minute_is_removed(env, run):
+    posting_member(env, run, 90)
     gif = {"file_id": "a", "file_unique_id": "gif1", "width": 1, "height": 1, "duration": 1}
     message(env, run, 90, mid=1, animation=gif, document={"file_id": "a", "file_unique_id": "gif1"})
     gif2 = {**gif, "file_unique_id": "gif2"}
@@ -193,7 +223,72 @@ def test_second_gif_within_a_minute_is_removed(env, run):
     env.bot.delete_message.assert_awaited_once_with(G, 2)
 
 
+def test_one_animated_sticker_message_a_day(env, run):
+    posting_member(env, run, 90)
+    sticker = {"file_id": "s", "file_unique_id": "st1", "width": 512, "height": 512,
+               "type": "regular", "is_animated": True, "is_video": False}
+    message(env, run, 90, mid=1, sticker=sticker)
+    run(env.store._execute("UPDATE messages SET created_at = now() - interval '23 hours'"))
+    message(env, run, 90, mid=2, sticker={**sticker, "file_unique_id": "st2", "is_animated": False, "is_video": True})
+    env.bot.delete_message.assert_awaited_once_with(G, 2)
+    notice = env.bot.send_message.call_args.args[1]
+    assert "un mesaj cu stickere animate pe zi" in notice and "approape.ro" in notice
+    assert events(env, run, 90) == ["delete"]  # not a violation: no warning, no mute
+    assert run(env.store._one("SELECT COUNT(*) AS n FROM violations"))["n"] == 0
+
+
+def test_animated_sticker_allowed_again_after_a_day(env, run):
+    posting_member(env, run, 90)
+    sticker = {"file_id": "s", "file_unique_id": "st1", "width": 512, "height": 512,
+               "type": "regular", "is_animated": True, "is_video": False}
+    message(env, run, 90, mid=1, sticker=sticker)
+    run(env.store._execute("UPDATE messages SET created_at = now() - interval '25 hours'"))
+    message(env, run, 90, mid=2, sticker={**sticker, "file_unique_id": "st2"})
+    env.bot.delete_message.assert_not_awaited()
+
+
+def test_static_stickers_are_not_limited(env, run):
+    posting_member(env, run, 90)
+    sticker = {"file_id": "s", "file_unique_id": "st1", "width": 512, "height": 512,
+               "type": "regular", "is_animated": False, "is_video": False}
+    message(env, run, 90, mid=1, sticker=sticker)
+    message(env, run, 90, mid=2, sticker={**sticker, "file_unique_id": "st2"})
+    env.bot.delete_message.assert_not_awaited()
+
+
+def test_a_message_with_an_approape_link_is_exempt_from_every_rule(env, run):
+    posting_member(env, run, 90)
+    for mid in range(1, 4):
+        message(env, run, 90, "Profilul meu: https://www.approape.ro/escorte/ana sună 0722123456", mid=mid)
+    message(env, run, 90, "detalii", mid=4,
+            entities=[{"type": "text_link", "offset": 0, "length": 7, "url": "https://approape.ro/escorte/ana"}])
+    # Telegram marks a bare "approape.ro/..." as a url entity itself.
+    message(env, run, 91, "Nouă aici, vezi approape.ro/creatoare/ana", mid=5,  # locked, pre-bot
+            entities=[{"type": "url", "offset": 16, "length": 25}])
+    env.bot.delete_message.assert_not_awaited()
+
+
+def test_a_lookalike_domain_is_not_approape(env, run):
+    posting_member(env, run, 90)
+    for mid in (1, 2):
+        message(env, run, 90, "Vezi https://approape.ro.example.com/x", mid=mid)
+    env.bot.delete_message.assert_awaited_once_with(G, 2)
+
+
+def test_gifs_arriving_together_are_still_limited(env, run):
+    # Telegram delivers a backlog (e.g. when Render wakes up) over parallel
+    # webhook requests, so the handlers run concurrently.
+    posting_member(env, run, 90)
+    updates = [gif_update(90, mid, f"gif{mid}") for mid in range(1, 5)]
+
+    async def burst():
+        await asyncio.gather(*(bot.on_group_message(u, env.ctx) for u in updates))
+    run(burst())
+    assert env.bot.delete_message.await_count == 3
+
+
 def test_hidden_link_counts_as_a_link(env, run):
+    posting_member(env, run, 90)
     message(env, run, 90, "vezi aici", mid=1,
             entities=[{"type": "text_link", "offset": 0, "length": 4, "url": "https://x.ro/a"}])
     message(env, run, 90, "detalii", mid=2,
@@ -214,3 +309,28 @@ def test_help_message_reaches_support_and_reply_comes_back(env, run):
         "reply_to_message": {"message_id": 501, "date": 0, "chat": {"id": S, "type": "supergroup"}}}}, None)
     run(bot.on_support_reply(reply, env.ctx))
     env.bot.copy_message.assert_awaited_with(42, S, 8)
+
+
+def start(env, run, uid, payload):
+    upd = private_command(env, run, uid, f"/start {payload}")
+    run(bot.cmd_start(upd, SimpleNamespace(bot=env.bot, args=[payload])))
+
+
+def test_account_help_link_explains_and_alerts_support(env, run):
+    start(env, run, 42, "cont")
+    texts = [(c.kwargs.get("chat_id") or c.args[0], c.kwargs.get("text") or c.args[1])
+             for c in env.bot.send_message.call_args_list]
+    assert texts[0][0] == 42 and "numărul de telefon" in texts[0][1]
+    assert texts[1][0] == S and "nu își poate face cont" in texts[1][1]
+    # An admin replying to that alert reaches the person.
+    assert run(env.store.support_user_for(500)) == 42
+
+
+def test_plain_help_link_does_not_alert_support(env, run):
+    start(env, run, 42, "ajutor")
+    assert env.bot.send_message.await_count == 1
+
+
+def test_unknown_start_payload_shows_invite_status(env, run):
+    start(env, run, 42, "invite")
+    assert "Linkul tău" in env.bot.send_message.call_args.kwargs["text"]

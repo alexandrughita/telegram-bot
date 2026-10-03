@@ -62,6 +62,15 @@ def extract_urls(text, entity_urls=()):
     return {normalize_url(u) for u in found if u.strip()}
 
 
+def links_to_approape(urls):
+    """True when any (normalized) URL points at approape.ro or one of its subdomains."""
+    for url in urls:
+        host = url.split("/", 1)[0].split("?", 1)[0].split(":", 1)[0]
+        if host == "approape.ro" or host.endswith(".approape.ro"):
+            return True
+    return False
+
+
 def normalize_phone(raw):
     digits = re.sub(r"\D", "", raw)
     m = RO_MOBILE_RE.match(digits)

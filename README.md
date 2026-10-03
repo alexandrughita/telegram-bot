@@ -13,14 +13,21 @@ bot's private chat.
 - Only joins through the bot's personal links count. A member added by hand, a rejoin,
   yourself, or a bot never counts. A person counts once, for whoever brought them first.
 - An invite counts **for good**, even if the invited person leaves later.
-- Members who were in the group **before** the bot keep posting (marked `legacy`).
+- Members who were in the group **before** the bot need their 3 invites too (marked
+  `legacy`): their first post is deleted, they are restricted and shown their link.
 - An unlocked member who leaves and comes back can post again straight away.
 
 **Moderation** (for everyone except the group's admins, read live from Telegram)
+- A message containing a link to **approape.ro** (or a subdomain, including a link hidden
+  behind text) is exempt from every rule below and from the invite requirement. A member
+  Telegram has already restricted still cannot send anything, though.
 - Repeated ad within 6 hours: the same photo/clip, any shared link (including links
   hidden behind text), the same Romanian mobile number, the same text, or a near-identical
   text (≥ 40 characters).
-- At most 1 GIF message per 60 seconds.
+- At most 1 GIF message per 60 seconds (a burst delivered all at once still counts).
+- At most 1 message with animated/video stickers per 24 hours. The next one is deleted with
+  a note recommending an approape.ro account; it is not a violation (no warning, no mute).
+  Static stickers are not limited.
 - Escalation within 48h: 1st violation = delete only; 2nd and 3rd = delete + warning;
   4th onwards = delete + mute for 60 minutes.
 - Messages posted "as a channel" are deleted; anonymous admins and posts from the linked
@@ -33,8 +40,12 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
     WHERE user_id = <id> ORDER BY created_at DESC;
 
 **Help desk**
-- `https://t.me/<bot>?start=ajutor` opens the private chat with a help message. That's the
-  link the site uses wherever it says "scrie-ne pe Telegram".
+- The site's help links open the private chat as `https://t.me/approape_guard_bot?start=<topic>`:
+  - `ajutor` — general help;
+  - `cont` — could not create an account;
+  - `revendicare` — wants to claim a profile but the SMS does not arrive.
+  The bot tells the person what to send. For `cont` and `revendicare` it also alerts
+  `SUPPORT_CHAT_ID`, and a reply to that alert reaches the person.
 - Anything written to the bot privately reaches `SUPPORT_CHAT_ID`. An admin's **reply**
   to that message goes back to the person.
 

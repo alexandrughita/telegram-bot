@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_messages_user_time ON messages(chat_id, user_id, created_at);
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS is_sticker BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS violations (
     id          BIGSERIAL PRIMARY KEY,
@@ -179,12 +180,21 @@ class Store:
             (chat_id, user_id, seconds))
         return row["n"]
 
-    async def save_message(self, chat_id, user_id, message_id, fp, is_gif):
+    async def recent_sticker_count(self, chat_id, user_id, hours):
+        """Animated or video sticker messages inside the window."""
+        row = await self._one(
+            """SELECT COUNT(*) AS n FROM messages
+               WHERE chat_id=%s AND user_id=%s AND is_sticker
+                 AND created_at >= now() - %s * interval '1 hour'""",
+            (chat_id, user_id, hours))
+        return row["n"]
+
+    async def save_message(self, chat_id, user_id, message_id, fp, is_gif, is_sticker=False):
         await self._execute(
-            """INSERT INTO messages(chat_id,user_id,message_id,text,urls,phones,media,is_gif)
-               VALUES(%s,%s,%s,%s,%s,%s,%s,%s)""",
+            """INSERT INTO messages(chat_id,user_id,message_id,text,urls,phones,media,is_gif,is_sticker)
+               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (chat_id, user_id, message_id, fp.text, sorted(fp.urls), sorted(fp.phones),
-             sorted(fp.media), is_gif))
+             sorted(fp.media), is_gif, is_sticker))
 
     # ---- violations ----------------------------------------------------
     async def add_violation(self, chat_id, user_id, reason, window_hours):

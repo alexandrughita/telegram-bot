@@ -11,7 +11,7 @@ from telegram import ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 from db import Store
-from moderation import build_fingerprint, duplicate_reason, violation_action
+from moderation import build_fingerprint, duplicate_reason, links_to_approape, violation_action
 
 # ------------------------------------------------------------
 # Configuration
@@ -36,6 +36,8 @@ MUTE_MINUTES = int(os.environ.get("MUTE_MINUTES", "60"))
 PORT = int(os.environ.get("PORT", "10000"))
 
 WELCOME_TTL_SECONDS = 180
+# One message with animated/video stickers per member per day.
+STICKER_WINDOW_HOURS = 24
 NOTICE_TTL_SECONDS = 60
 CACHE_TTL_SECONDS = 300
 
@@ -59,6 +61,10 @@ _admin_cache = {}        # chat_id -> (expires_at, set of admin ids)
 _permissions_cache = {}  # chat_id -> (expires_at, ChatPermissions)
 _support_ack_at = {}     # user_id -> last time we acknowledged a help message
 _background = set()      # strong refs to fire-and-forget tasks
+# Telegram delivers updates over parallel webhook requests (a whole backlog at once
+# when Render wakes up). Each check reads what earlier messages saved, so group
+# messages are moderated one at a time or a burst slips through unchecked.
+_moderation_lock = asyncio.Lock()
 _last_cleanup = 0.0
 
 
@@ -224,7 +230,8 @@ async def invite_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     member = await store.get_member(GROUP_CHAT_ID, user.id)
     if member is None:
         # In the group, but the bot never saw her join: she was there before it.
-        member = await store.add_member(GROUP_CHAT_ID, user, unlocked=True, legacy=True)
+        # She still needs her invites, like everyone else.
+        member = await store.add_member(GROUP_CHAT_ID, user, legacy=True)
 
     try:
         link = await personal_link(bot, user.id)
@@ -242,12 +249,44 @@ async def invite_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         disable_web_page_preview=True)
 
 
+# Help links on the site open the bot as t.me/<bot>?start=<topic>. Each topic tells
+# the person what to send, and the support chat which problem they came with.
+HELP_TOPICS = {
+    "ajutor": (
+        "Scrie-ne aici cu ce te putem ajuta. Echipa approape.ro îți răspunde în această conversație.",
+        None),
+    "cont": (
+        "Ne pare rău că nu ți-ai putut face cont. Ca să te ajutăm, scrie-ne aici:\n"
+        "1. numărul de telefon cu care ai încercat;\n"
+        "2. ce eroare ai văzut (o captură de ecran e cel mai bine);\n"
+        "3. dacă ești escortă, creatoare sau client.\n\n"
+        "Între timp poți intra pe approape.ro cu Google — merge și când SMS-ul nu vine.\n"
+        "Îți răspundem aici.",
+        "nu își poate face cont"),
+    "revendicare": (
+        "Vrei să-ți revendici profilul de pe approape.ro și SMS-ul nu ajunge. Scrie-ne aici:\n"
+        "1. linkul profilului tău de pe approape.ro;\n"
+        "2. numărul de telefon de pe profil;\n"
+        "3. o captură de ecran cu eroarea, dacă ai.\n\n"
+        "Verificăm că profilul e al tău și îți răspundem aici.",
+        "vrea să-și revendice profilul, SMS-ul nu ajunge"),
+}
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.args and context.args[0] == "ajutor":
-        await update.effective_message.reply_text(
-            "Scrie-ne aici cu ce te putem ajuta. Echipa approape.ro îți răspunde în această conversație.")
+    topic = HELP_TOPICS.get(context.args[0]) if context.args else None
+    if not topic:
+        await invite_status(update, context)
         return
-    await invite_status(update, context)
+    reply, support_note = topic
+    await update.effective_message.reply_text(reply)
+    if support_note and SUPPORT_CHAT_ID:
+        user = update.effective_user
+        note = await context.bot.send_message(
+            SUPPORT_CHAT_ID,
+            f"🆘 {user.full_name}" + (f" (@{user.username})" if user.username else "") + f" · id {user.id}\n"
+            f"Vine de pe site: {support_note}. Răspunde cu reply aici.")
+        await store.save_support_thread(note.message_id, user.id)
 
 
 async def cmd_group_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -315,7 +354,7 @@ async def maybe_cleanup():
     if time.monotonic() - _last_cleanup < 3600:
         return
     _last_cleanup = time.monotonic()
-    keep_hours = max(DUPLICATE_COOLDOWN_HOURS, GIF_WINDOW_SECONDS / 3600)
+    keep_hours = max(DUPLICATE_COOLDOWN_HOURS, GIF_WINDOW_SECONDS / 3600, STICKER_WINDOW_HOURS)
     await store.cleanup(keep_hours)
 
 
@@ -341,33 +380,62 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user or user.is_bot or await is_admin(bot, GROUP_CHAT_ID, user.id):
         return
 
-    member = await store.get_member(GROUP_CHAT_ID, user.id)
-    if member is None:
-        # The bot never saw her join, so she was in the group before it: she keeps posting.
-        member = await store.add_member(GROUP_CHAT_ID, user, unlocked=True, legacy=True)
-    if not member["unlocked"]:
-        # Telegram should already stop her; this covers the moment before the restriction lands.
-        try:
-            await bot.delete_message(message.chat_id, message.message_id)
-        except Exception:
-            pass
-        await store.log_event(GROUP_CHAT_ID, user.id, "delete", "fără drept de postare", message.message_id)
-        return
-
     fp = fingerprint_of(message)
-    is_gif = message.animation is not None
-    if is_gif and await store.recent_gif_count(GROUP_CHAT_ID, user.id, GIF_WINDOW_SECONDS) >= GIF_MAX_IN_WINDOW:
-        await punish(bot, message, "prea multe GIF-uri la rând")
-        return
+    if links_to_approape(fp.urls):
+        return  # a link to approape.ro may be posted any time, by anyone in the group
 
-    earlier = await store.recent_fingerprints(GROUP_CHAT_ID, user.id, DUPLICATE_COOLDOWN_HOURS)
-    reason = duplicate_reason(fp, earlier, SIMILARITY_THRESHOLD)
-    if reason:
-        await punish(bot, message, f"reclamă repetată: {reason}")
-        return
+    async with _moderation_lock:
+        member = await store.get_member(GROUP_CHAT_ID, user.id)
+        if member is None:
+            # The bot never saw her join, so she was in the group before it. She still
+            # needs her invites; Telegram has not restricted her yet, so that happens below.
+            member = await store.add_member(GROUP_CHAT_ID, user, legacy=True)
+        if not member["unlocked"]:
+            try:
+                await bot.delete_message(message.chat_id, message.message_id)
+            except Exception:
+                pass
+            await store.log_event(GROUP_CHAT_ID, user.id, "delete", "fără drept de postare", message.message_id)
+            await restrict(bot, GROUP_CHAT_ID, user.id)
+            await send_temporary(
+                bot, GROUP_CHAT_ID,
+                f"{user.mention_html()}, ca să poți posta, adu {INVITES_REQUIRED} membri "
+                f"prin linkul tău personal.",
+                NOTICE_TTL_SECONDS, reply_markup=invite_button(bot))
+            return
 
-    await store.save_message(GROUP_CHAT_ID, user.id, message.message_id, fp, is_gif)
-    await maybe_cleanup()
+        is_gif = message.animation is not None
+        # Static stickers are left alone; animated and video ones are limited per day.
+        sticker = message.sticker
+        is_sticker = bool(sticker and (sticker.is_animated or sticker.is_video))
+        if is_sticker and await store.recent_sticker_count(GROUP_CHAT_ID, user.id, STICKER_WINDOW_HOURS) >= 1:
+            # Deleted and explained, but not a violation: no warning, no mute.
+            try:
+                await bot.delete_message(message.chat_id, message.message_id)
+            except Exception:
+                pass
+            await store.log_event(GROUP_CHAT_ID, user.id, "delete", "stickere animate: limita zilnică",
+                                  message.message_id)
+            await send_temporary(
+                bot, GROUP_CHAT_ID,
+                f"{user.mention_html()}, poți trimite un mesaj cu stickere animate pe zi. "
+                f"Ca să postezi oricând, fă-ți cont pe "
+                f'<a href="https://www.approape.ro">approape.ro</a>: mesajele care conțin un link '
+                f"approape.ro (de exemplu profilul tău) nu au nicio limită.",
+                NOTICE_TTL_SECONDS)
+            return
+        if is_gif and await store.recent_gif_count(GROUP_CHAT_ID, user.id, GIF_WINDOW_SECONDS) >= GIF_MAX_IN_WINDOW:
+            await punish(bot, message, "prea multe GIF-uri la rând")
+            return
+
+        earlier = await store.recent_fingerprints(GROUP_CHAT_ID, user.id, DUPLICATE_COOLDOWN_HOURS)
+        reason = duplicate_reason(fp, earlier, SIMILARITY_THRESHOLD)
+        if reason:
+            await punish(bot, message, f"reclamă repetată: {reason}")
+            return
+
+        await store.save_message(GROUP_CHAT_ID, user.id, message.message_id, fp, is_gif, is_sticker)
+        await maybe_cleanup()
 
 
 # ------------------------------------------------------------

@@ -135,6 +135,8 @@ def test_three_joins_through_her_link_unlock_her(env, run):
     assert env.bot.posting_unlocked(50)
     assert run(env.store.get_member(G, 50))["unlocked"]
     assert events(env, run, 50) == ["unlock"]
+    to_her = [c.args[1] for c in env.bot.send_message.call_args_list if c.args and c.args[0] == 50]
+    assert to_her == [f"✅ Ai adus {bot.INVITES_REQUIRED} membri — acum poți posta în grup."]
 
 
 def events(env, run, uid):

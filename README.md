@@ -21,7 +21,7 @@ bot's private chat.
 - Repeated ad within 6 hours: the same photo/clip, any shared link (including links
   hidden behind text), the same Romanian mobile number, the same text, or a near-identical
   text (≥ 40 characters).
-- At most 1 GIF message per 60 seconds (a burst delivered all at once still counts).
+- At most 1 GIF or animated sticker per 60 seconds (a burst delivered all at once still counts).
 - Escalation within 48h: 1st violation = delete only; 2nd and 3rd = delete + warning;
   4th onwards = delete + mute for 60 minutes.
 - Messages posted "as a channel" are deleted; anonymous admins and posts from the linked

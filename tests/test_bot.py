@@ -223,6 +223,26 @@ def test_second_gif_within_a_minute_is_removed(env, run):
     env.bot.delete_message.assert_awaited_once_with(G, 2)
 
 
+def test_animated_and_video_stickers_count_as_gifs(env, run):
+    posting_member(env, run, 90)
+    sticker = {"file_id": "s", "file_unique_id": "st1", "width": 512, "height": 512,
+               "type": "regular", "is_animated": True, "is_video": False}
+    message(env, run, 90, mid=1, sticker=sticker)
+    message(env, run, 90, mid=2, sticker={**sticker, "file_unique_id": "st2", "is_animated": False, "is_video": True})
+    gif = {"file_id": "a", "file_unique_id": "gif1", "width": 1, "height": 1, "duration": 1}
+    message(env, run, 90, mid=3, animation=gif, document={"file_id": "a", "file_unique_id": "gif1"})
+    assert [c.args for c in env.bot.delete_message.call_args_list] == [(G, 2), (G, 3)]
+
+
+def test_static_stickers_are_not_gifs(env, run):
+    posting_member(env, run, 90)
+    sticker = {"file_id": "s", "file_unique_id": "st1", "width": 512, "height": 512,
+               "type": "regular", "is_animated": False, "is_video": False}
+    message(env, run, 90, mid=1, sticker=sticker)
+    message(env, run, 90, mid=2, sticker={**sticker, "file_unique_id": "st2"})
+    env.bot.delete_message.assert_not_awaited()
+
+
 def test_gifs_arriving_together_are_still_limited(env, run):
     # Telegram delivers a backlog (e.g. when Render wakes up) over parallel
     # webhook requests, so the handlers run concurrently.

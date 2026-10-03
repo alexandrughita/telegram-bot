@@ -367,7 +367,9 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         fp = fingerprint_of(message)
-        is_gif = message.animation is not None
+        # Animated and video stickers are used exactly like GIFs; static ones are not.
+        sticker = message.sticker
+        is_gif = message.animation is not None or bool(sticker and (sticker.is_animated or sticker.is_video))
         if is_gif and await store.recent_gif_count(GROUP_CHAT_ID, user.id, GIF_WINDOW_SECONDS) >= GIF_MAX_IN_WINDOW:
             await punish(bot, message, "prea multe GIF-uri la rând")
             return

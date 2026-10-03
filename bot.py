@@ -1,250 +1,133 @@
-import os
-import re
-import sqlite3
-import hashlib
-import difflib
+import asyncio
+import hmac
 import logging
-from datetime import datetime, timezone, timedelta
-from urllib.parse import urlparse
+import os
+import time
+from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI, Request
 import uvicorn
+from fastapi import FastAPI, Request, Response
+from telegram import ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, Update
+from telegram.ext import Application, ChatMemberHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-from telegram import Update, ChatPermissions
-from telegram.ext import (
-    Application, CommandHandler, ContextTypes,
-    MessageHandler, ChatMemberHandler, filters,
-)
+from db import Store
+from moderation import build_fingerprint, duplicate_reason, violation_action
 
 # ------------------------------------------------------------
 # Configuration
 # ------------------------------------------------------------
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "").rstrip("/")
-WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "change-me")
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+# Render sets RENDER_EXTERNAL_URL itself, so WEBHOOK_URL is only needed elsewhere.
+WEBHOOK_URL = (os.environ.get("WEBHOOK_URL") or os.environ.get("RENDER_EXTERNAL_URL", "")).rstrip("/")
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
+
+# 0 until known: the bot then only answers /chatid, which is how you find them.
+GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID") or 0)
+SUPPORT_CHAT_ID = int(os.environ.get("SUPPORT_CHAT_ID") or 0)
 
 INVITES_REQUIRED = int(os.environ.get("INVITES_REQUIRED", "3"))
 DUPLICATE_COOLDOWN_HOURS = float(os.environ.get("DUPLICATE_COOLDOWN_HOURS", "6"))
 GIF_WINDOW_SECONDS = int(os.environ.get("GIF_WINDOW_SECONDS", "60"))
 GIF_MAX_IN_WINDOW = int(os.environ.get("GIF_MAX_IN_WINDOW", "1"))
-MAX_ADS_PER_DAY = int(os.environ.get("MAX_ADS_PER_DAY", "0"))  # 0 = disabled
 SIMILARITY_THRESHOLD = float(os.environ.get("SIMILARITY_THRESHOLD", "0.92"))
-AUTO_MUTE_AFTER = int(os.environ.get("AUTO_MUTE_AFTER", "3"))
-AUTO_MUTE_MINUTES = int(os.environ.get("AUTO_MUTE_MINUTES", "60"))
-
-DB_PATH = os.environ.get("DB_PATH", "bot.db")
+VIOLATION_WINDOW_HOURS = float(os.environ.get("VIOLATION_WINDOW_HOURS", "48"))
+MUTE_MINUTES = int(os.environ.get("MUTE_MINUTES", "60"))
 PORT = int(os.environ.get("PORT", "10000"))
 
-logging.basicConfig(
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    level=logging.INFO,
-)
+WELCOME_TTL_SECONDS = 180
+NOTICE_TTL_SECONDS = 60
+CACHE_TTL_SECONDS = 300
+
+logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 log = logging.getLogger("telegram-bot")
 
-app = FastAPI()
-tg_app = Application.builder().token(BOT_TOKEN).build()
+store: Store = None  # opened in main()
 
-
-# ------------------------------------------------------------
-# Database
-# ------------------------------------------------------------
-def db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def init_db():
-    conn = db()
-    conn.executescript("""
-    CREATE TABLE IF NOT EXISTS users (
-        chat_id INTEGER NOT NULL,
-        user_id INTEGER NOT NULL,
-        username TEXT,
-        first_name TEXT,
-        invited_by INTEGER,
-        joined_at TEXT,
-        unlocked INTEGER DEFAULT 0,
-        is_admin INTEGER DEFAULT 0,
-        warnings INTEGER DEFAULT 0,
-        PRIMARY KEY (chat_id, user_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS invite_links (
-        chat_id INTEGER NOT NULL,
-        invite_link TEXT PRIMARY KEY,
-        inviter_id INTEGER NOT NULL,
-        created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS invites (
-        chat_id INTEGER NOT NULL,
-        invited_user_id INTEGER NOT NULL,
-        inviter_id INTEGER NOT NULL,
-        invite_link TEXT,
-        joined_at TEXT NOT NULL,
-        PRIMARY KEY (chat_id, invited_user_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chat_id INTEGER NOT NULL,
-        user_id INTEGER NOT NULL,
-        message_id INTEGER NOT NULL,
-        text_hash TEXT,
-        normalized_text TEXT,
-        photo_unique_id TEXT,
-        url TEXT,
-        is_gif INTEGER DEFAULT 0,
-        created_at TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS warnings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        chat_id INTEGER NOT NULL,
-        user_id INTEGER NOT NULL,
-        reason TEXT,
-        created_at TEXT NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_messages_user_time
-      ON messages(chat_id, user_id, created_at);
-
-    CREATE INDEX IF NOT EXISTS idx_invites_inviter
-      ON invites(chat_id, inviter_id);
-    """)
-    conn.commit()
-    conn.close()
-
-
-def now_iso():
-    return datetime.now(timezone.utc).isoformat()
-
-
-def parse_iso(value):
-    return datetime.fromisoformat(value)
-
-
-def upsert_user(chat_id, user, invited_by=None):
-    conn = db()
-    conn.execute("""
-        INSERT INTO users(chat_id,user_id,username,first_name,invited_by,joined_at)
-        VALUES(?,?,?,?,?,?)
-        ON CONFLICT(chat_id,user_id) DO UPDATE SET
-          username=excluded.username,
-          first_name=excluded.first_name
-    """, (
-        chat_id, user.id, user.username, user.first_name,
-        invited_by, now_iso()
-    ))
-    conn.commit()
-    conn.close()
-
-
-def is_unlocked(chat_id, user_id):
-    conn = db()
-    row = conn.execute(
-        "SELECT unlocked FROM users WHERE chat_id=? AND user_id=?",
-        (chat_id, user_id)
-    ).fetchone()
-    conn.close()
-    return bool(row and row["unlocked"])
-
-
-def is_admin(chat_id, user_id):
-    conn = db()
-    row = conn.execute(
-        "SELECT is_admin FROM users WHERE chat_id=? AND user_id=?",
-        (chat_id, user_id)
-    ).fetchone()
-    conn.close()
-    return bool(row and row["is_admin"])
-
-
-def invite_count(chat_id, inviter_id):
-    conn = db()
-    row = conn.execute(
-        "SELECT COUNT(*) AS n FROM invites WHERE chat_id=? AND inviter_id=?",
-        (chat_id, inviter_id)
-    ).fetchone()
-    conn.close()
-    return int(row["n"])
-
-
-def add_warning(chat_id, user_id, reason):
-    conn = db()
-    conn.execute(
-        "INSERT INTO warnings(chat_id,user_id,reason,created_at) VALUES(?,?,?,?)",
-        (chat_id, user_id, reason, now_iso())
-    )
-    conn.execute(
-        "UPDATE users SET warnings=warnings+1 WHERE chat_id=? AND user_id=?",
-        (chat_id, user_id)
-    )
-    row = conn.execute(
-        "SELECT warnings FROM users WHERE chat_id=? AND user_id=?",
-        (chat_id, user_id)
-    ).fetchone()
-    conn.commit()
-    conn.close()
-    return int(row["warnings"]) if row else 1
-
-
-# ------------------------------------------------------------
-# Telegram permissions / membership
-# ------------------------------------------------------------
-READ_ONLY_PERMISSIONS = ChatPermissions(
-    can_send_messages=False,
-    can_send_audios=False,
-    can_send_documents=False,
-    can_send_photos=False,
-    can_send_videos=False,
-    can_send_video_notes=False,
-    can_send_voice_notes=False,
-    can_send_polls=False,
-    can_send_other_messages=False,
-    can_add_web_page_previews=False,
-    can_change_info=False,
-    can_invite_users=True,
-    can_pin_messages=False,
-    can_manage_topics=False,
+ADMIN_STATUSES = ("creator", "administrator")
+READ_ONLY = ChatPermissions.no_permissions()
+# Used only if the group's own default permissions cannot be read.
+FALLBACK_POSTING = ChatPermissions(
+    can_send_messages=True, can_send_audios=True, can_send_documents=True,
+    can_send_photos=True, can_send_videos=True, can_send_video_notes=True,
+    can_send_voice_notes=True, can_send_polls=True, can_send_other_messages=True,
+    can_add_web_page_previews=True, can_invite_users=True,
 )
 
-POSTING_PERMISSIONS = ChatPermissions(
-    can_send_messages=True,
-    can_send_audios=True,
-    can_send_documents=True,
-    can_send_photos=True,
-    can_send_videos=True,
-    can_send_video_notes=True,
-    can_send_voice_notes=True,
-    can_send_polls=True,
-    can_send_other_messages=True,
-    can_add_web_page_previews=True,
-    can_invite_users=True,
-    can_pin_messages=False,
-    can_manage_topics=False,
-)
+_admin_cache = {}        # chat_id -> (expires_at, set of admin ids)
+_permissions_cache = {}  # chat_id -> (expires_at, ChatPermissions)
+_support_ack_at = {}     # user_id -> last time we acknowledged a help message
+_background = set()      # strong refs to fire-and-forget tasks
+_last_cleanup = 0.0
 
 
-async def restrict_user(chat_id, user_id):
+def in_chat(member):
+    if member.status in ("creator", "administrator", "member"):
+        return True
+    return member.status == "restricted" and getattr(member, "is_member", False)
+
+
+def spawn(coro):
+    task = asyncio.create_task(coro)
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+
+
+async def delete_later(bot, chat_id, message_id, seconds):
+    await asyncio.sleep(seconds)
     try:
-        await tg_app.bot.restrict_chat_member(
-            chat_id=chat_id,
-            user_id=user_id,
-            permissions=READ_ONLY_PERMISSIONS,
-        )
+        await bot.delete_message(chat_id, message_id)
+    except Exception:
+        pass
+
+
+async def send_temporary(bot, chat_id, text, seconds, **kwargs):
+    try:
+        sent = await bot.send_message(chat_id, text, parse_mode="HTML", **kwargs)
+        spawn(delete_later(bot, chat_id, sent.message_id, seconds))
+    except Exception as exc:
+        log.warning("Could not send notice: %s", exc)
+
+
+# ------------------------------------------------------------
+# Admins and permissions, read live from Telegram
+# ------------------------------------------------------------
+async def is_admin(bot, chat_id, user_id):
+    cached = _admin_cache.get(chat_id)
+    if not cached or cached[0] < time.monotonic():
+        admins = await bot.get_chat_administrators(chat_id)
+        cached = (time.monotonic() + CACHE_TTL_SECONDS, {a.user.id for a in admins})
+        _admin_cache[chat_id] = cached
+    return user_id in cached[1]
+
+
+async def posting_permissions(bot, chat_id):
+    cached = _permissions_cache.get(chat_id)
+    if not cached or cached[0] < time.monotonic():
+        try:
+            chat = await bot.get_chat(chat_id)
+            perms = chat.permissions or FALLBACK_POSTING
+        except Exception as exc:
+            log.warning("Could not read group permissions: %s", exc)
+            perms = FALLBACK_POSTING
+        cached = (time.monotonic() + CACHE_TTL_SECONDS, perms)
+        _permissions_cache[chat_id] = cached
+    return cached[1]
+
+
+async def restrict(bot, chat_id, user_id):
+    try:
+        await bot.restrict_chat_member(chat_id, user_id, READ_ONLY, use_independent_chat_permissions=True)
     except Exception as exc:
         log.warning("Could not restrict %s: %s", user_id, exc)
 
 
-async def unlock_user(chat_id, user_id):
+async def allow_posting(bot, chat_id, user_id):
     try:
-        await tg_app.bot.restrict_chat_member(
-            chat_id=chat_id,
-            user_id=user_id,
-            permissions=POSTING_PERMISSIONS,
-        )
+        await bot.restrict_chat_member(
+            chat_id, user_id, await posting_permissions(bot, chat_id),
+            use_independent_chat_permissions=True)
     except Exception as exc:
         log.warning("Could not unlock %s: %s", user_id, exc)
 
@@ -252,373 +135,322 @@ async def unlock_user(chat_id, user_id):
 # ------------------------------------------------------------
 # Invite system
 # ------------------------------------------------------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.effective_chat or not update.effective_user:
+def invite_button(bot):
+    return InlineKeyboardMarkup([[InlineKeyboardButton(
+        "🔗 Linkul meu de invitație", url=f"https://t.me/{bot.username}?start=invite")]])
+
+
+async def personal_link(bot, user_id):
+    link = await store.get_invite_link(GROUP_CHAT_ID, user_id)
+    if link:
+        return link
+    created = await bot.create_chat_invite_link(GROUP_CHAT_ID, name=f"inv-{user_id}")
+    await store.save_invite_link(GROUP_CHAT_ID, user_id, created.invite_link)
+    return created.invite_link
+
+
+async def maybe_unlock(bot, inviter_id):
+    member = await store.get_member(GROUP_CHAT_ID, inviter_id)
+    if not member or member["unlocked"]:
         return
-
-    chat = update.effective_chat
-    user = update.effective_user
-
-    if chat.type == "private":
-        await update.message.reply_text(
-            "Adaugă-mă în grup ca administrator și folosește /invite în grup."
-        )
+    if await store.invite_count(GROUP_CHAT_ID, inviter_id) < INVITES_REQUIRED:
         return
-
-    await status(update, context)
-
-
-async def invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.effective_chat or not update.effective_user:
-        return
-    chat_id = update.effective_chat.id
-    user = update.effective_user
-
+    await store.set_unlocked(GROUP_CHAT_ID, inviter_id)
+    await allow_posting(bot, GROUP_CHAT_ID, inviter_id)
+    await store.log_event(GROUP_CHAT_ID, inviter_id, "unlock", f"{INVITES_REQUIRED} invitații")
     try:
-        link = await tg_app.bot.create_chat_invite_link(
-            chat_id=chat_id,
-            name=f"invite-{user.id}",
-            creates_join_request=False,
-        )
-    except Exception as exc:
-        await update.message.reply_text(
-            "Nu pot crea linkul personal. Botul trebuie să fie administrator "
-            "și să aibă dreptul de a invita utilizatori."
-        )
-        log.exception("create_chat_invite_link failed: %s", exc)
-        return
-
-    conn = db()
-    conn.execute(
-        "INSERT OR REPLACE INTO invite_links(chat_id,invite_link,inviter_id,created_at)"
-        " VALUES(?,?,?,?)",
-        (chat_id, link.invite_link, user.id, now_iso())
-    )
-    conn.commit()
-    conn.close()
-
-    count = invite_count(chat_id, user.id)
-    remaining = max(0, INVITES_REQUIRED - count)
-
-    await update.message.reply_text(
-        f"🔗 Linkul tău personal:\n{link.invite_link}\n\n"
-        f"👥 Invitații validați: {count}/{INVITES_REQUIRED}\n"
-        f"{'✅ Poți posta.' if remaining == 0 else f'Îți mai trebuie {remaining}.'}"
-    )
+        await bot.send_message(inviter_id, "✅ Ai adus 3 membri — acum poți posta în grup.")
+    except Exception:
+        pass  # she never opened a private chat with the bot
 
 
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.effective_chat or not update.effective_user:
-        return
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-    count = invite_count(chat_id, user_id)
-    unlocked = is_unlocked(chat_id, user_id)
-
-    if unlocked:
-        text = "✅ Ai drept de postare."
-    else:
-        text = (
-            f"🔒 Nu ai încă drept de postare.\n"
-            f"Invitații validați: {count}/{INVITES_REQUIRED}\n"
-            f"Folosește /invite pentru linkul tău."
-        )
-    await update.message.reply_text(text)
-
-
-async def handle_member_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cm = update.chat_member
-    if not cm:
+    if not cm or cm.chat.id != GROUP_CHAT_ID:
         return
-
-    chat_id = cm.chat.id
-    new = cm.new_chat_member
-    old = cm.old_chat_member
+    old, new = cm.old_chat_member, cm.new_chat_member
     user = new.user
+    if old.status in ADMIN_STATUSES or new.status in ADMIN_STATUSES:
+        _admin_cache.pop(GROUP_CHAT_ID, None)
+    if user.is_bot or in_chat(old) or not in_chat(new):
+        return  # not a join: a promotion, a restriction, a departure, or a bot
 
-    # Ignore bots joining.
-    if user.is_bot:
+    bot = context.bot
+    if new.status in ADMIN_STATUSES:
+        await store.add_member(GROUP_CHAT_ID, user, unlocked=True)
         return
 
-    joined = (
-        old.status in ("left", "kicked")
-        and new.status in ("member", "restricted")
-    )
-    if not joined:
+    existing = await store.get_member(GROUP_CHAT_ID, user.id)
+    if existing:
+        # Coming back: restore what she had, and no invite credit for anyone.
+        if existing["unlocked"]:
+            await allow_posting(bot, GROUP_CHAT_ID, user.id)
+        else:
+            await restrict(bot, GROUP_CHAT_ID, user.id)
         return
 
-    inviter_id = None
-    invite_link = getattr(cm, "invite_link", None)
-    invite_url = invite_link.invite_link if invite_link else None
+    await store.add_member(GROUP_CHAT_ID, user)
+    await restrict(bot, GROUP_CHAT_ID, user.id)
 
-    if invite_url:
-        conn = db()
-        row = conn.execute(
-            "SELECT inviter_id FROM invite_links WHERE chat_id=? AND invite_link=?",
-            (chat_id, invite_url)
-        ).fetchone()
-        conn.close()
-        if row:
-            inviter_id = row["inviter_id"]
+    # Only the bot's personal links count. Someone added by hand, or through
+    # a link the bot did not create, is credited to nobody.
+    if cm.invite_link:
+        inviter_id = await store.inviter_for_link(GROUP_CHAT_ID, cm.invite_link.invite_link)
+        if inviter_id and inviter_id != user.id:
+            if await store.record_invite(GROUP_CHAT_ID, user.id, inviter_id):
+                await maybe_unlock(bot, inviter_id)
 
-    upsert_user(chat_id, user, inviter_by=inviter_id)
-
-    if inviter_id and inviter_id != user.id:
-        conn = db()
-        conn.execute(
-            "INSERT OR IGNORE INTO invites(chat_id,invited_user_id,inviter_id,invite_link,joined_at)"
-            " VALUES(?,?,?,?,?)",
-            (chat_id, user.id, inviter_id, invite_url, now_iso())
-        )
-        conn.commit()
-        conn.close()
-
-        count = invite_count(chat_id, inviter_id)
-        if count >= INVITES_REQUIRED:
-            conn = db()
-            conn.execute(
-                "UPDATE users SET unlocked=1 WHERE chat_id=? AND user_id=?",
-                (chat_id, inviter_id)
-            )
-            conn.commit()
-            conn.close()
-            await unlock_user(chat_id, inviter_id)
-
-    # New members are read-only until unlocked.
-    await restrict_user(chat_id, user.id)
+    await send_temporary(
+        bot, GROUP_CHAT_ID,
+        f"Bun venit, {user.mention_html()}! Ca să poți posta, adu {INVITES_REQUIRED} membri "
+        f"prin linkul tău personal.",
+        WELCOME_TTL_SECONDS, reply_markup=invite_button(bot))
 
 
-# ------------------------------------------------------------
-# Moderation helpers
-# ------------------------------------------------------------
-def normalize_text(text):
-    text = text.lower()
-    text = re.sub(r"https?://\S+", " URL ", text)
-    text = re.sub(r"[@#]\w+", " TAG ", text)
-    text = re.sub(r"\s+", " ", text)
-    text = re.sub(r"[^\w\s]", "", text, flags=re.UNICODE)
-    return text.strip()
+async def invite_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Private chat: the user's single personal link and how far along she is."""
+    bot, user = context.bot, update.effective_user
+    if not GROUP_CHAT_ID:
+        await update.effective_message.reply_text("Botul nu este configurat încă.")
+        return
+    membership = await bot.get_chat_member(GROUP_CHAT_ID, user.id)
+    if not in_chat(membership):
+        await update.effective_message.reply_text("Intră întâi în grup, apoi revino aici.")
+        return
+    if membership.status in ADMIN_STATUSES:
+        await update.effective_message.reply_text("Ești admin în grup — poți posta oricând.")
+        return
 
-
-def extract_first_url(text):
-    if not text:
-        return None
-    m = re.search(r"https?://[^\s]+", text)
-    if not m:
-        return None
-    return m.group(0).rstrip(").,!?;:")
-
-
-def photo_unique_id(message):
-    if not message.photo:
-        return None
-    # Telegram sends several sizes; the largest normally has the last item.
-    return message.photo[-1].file_unique_id
-
-
-def message_has_gif(message):
-    return bool(message.animation)
-
-
-def recent_gif_count(chat_id, user_id):
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=GIF_WINDOW_SECONDS)
-    conn = db()
-    rows = conn.execute(
-        "SELECT created_at FROM messages "
-        "WHERE chat_id=? AND user_id=? AND is_gif=1",
-        (chat_id, user_id)
-    ).fetchall()
-    conn.close()
-    return sum(parse_iso(r["created_at"]) >= cutoff for r in rows)
-
-
-def check_duplicate(chat_id, user_id, normalized, photo_id, url):
-    if not normalized and not photo_id and not url:
-        return False
-
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=DUPLICATE_COOLDOWN_HOURS)
-    conn = db()
-    rows = conn.execute(
-        "SELECT normalized_text,photo_unique_id,url FROM messages "
-        "WHERE chat_id=? AND user_id=? AND created_at>=?",
-        (chat_id, user_id, cutoff.isoformat())
-    ).fetchall()
-    conn.close()
-
-    for row in rows:
-        if photo_id and row["photo_unique_id"] == photo_id:
-            return True
-
-        if url and row["url"] == url:
-            # Same URL is considered the same promotion.
-            return True
-
-        old = row["normalized_text"]
-        if normalized and old:
-            if normalized == old:
-                return True
-            # Avoid calling short texts "similar".
-            if len(normalized) >= 40 and len(old) >= 40:
-                ratio = difflib.SequenceMatcher(None, normalized, old).ratio()
-                if ratio >= SIMILARITY_THRESHOLD:
-                    return True
-
-    return False
-
-
-def save_message(chat_id, user_id, message_id, normalized, photo_id, url, is_gif):
-    digest = hashlib.sha256(
-        f"{normalized}|{photo_id}|{url}".encode("utf-8")
-    ).hexdigest()
-
-    conn = db()
-    conn.execute(
-        "INSERT INTO messages(chat_id,user_id,message_id,text_hash,normalized_text,"
-        "photo_unique_id,url,is_gif,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-        (
-            chat_id, user_id, message_id, digest, normalized,
-            photo_id, url, int(is_gif), now_iso()
-        )
-    )
-    conn.commit()
-    conn.close()
-
-
-async def delete_message(message, reason, warn=False):
-    chat_id = message.chat_id
-    user_id = message.from_user.id
+    member = await store.get_member(GROUP_CHAT_ID, user.id)
+    if member is None:
+        # In the group, but the bot never saw her join: she was there before it.
+        member = await store.add_member(GROUP_CHAT_ID, user, unlocked=True, legacy=True)
 
     try:
-        await message.delete()
+        link = await personal_link(bot, user.id)
+    except Exception as exc:
+        log.exception("create_chat_invite_link failed: %s", exc)
+        await update.effective_message.reply_text("Nu pot crea linkul acum. Încearcă din nou mai târziu.")
+        return
+    count = await store.invite_count(GROUP_CHAT_ID, user.id)
+    if member["unlocked"]:
+        state = "✅ Poți posta în grup."
+    else:
+        state = f"Mai ai nevoie de {INVITES_REQUIRED - count} ca să poți posta."
+    await update.effective_message.reply_text(
+        f"🔗 Linkul tău:\n{link}\n\n👥 Invitații: {min(count, INVITES_REQUIRED)}/{INVITES_REQUIRED}\n{state}",
+        disable_web_page_preview=True)
+
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.args and context.args[0] == "ajutor":
+        await update.effective_message.reply_text(
+            "Scrie-ne aici cu ce te putem ajuta. Echipa approape.ro îți răspunde în această conversație.")
+        return
+    await invite_status(update, context)
+
+
+async def cmd_group_redirect(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/invite or /status typed in the group: the answer is personal, so it goes private."""
+    await send_temporary(
+        context.bot, update.effective_chat.id, "Îți arăt linkul și progresul în privat:",
+        NOTICE_TTL_SECONDS, reply_markup=invite_button(context.bot))
+
+
+# ------------------------------------------------------------
+# Moderation
+# ------------------------------------------------------------
+def fingerprint_of(message):
+    text = message.text or message.caption or ""
+    entities = {**message.parse_entities(), **message.parse_caption_entities()}
+    urls, phones = [], []
+    for entity, value in entities.items():
+        if entity.type == MessageEntity.TEXT_LINK:
+            urls.append(entity.url)
+        elif entity.type == MessageEntity.URL:
+            urls.append(value)
+        elif entity.type == MessageEntity.PHONE_NUMBER:
+            phones.append(value)
+    media = []
+    if message.photo:
+        media.append(message.photo[-1].file_unique_id)
+    for item in (message.video, message.animation, message.document, message.video_note):
+        if item:
+            media.append(item.file_unique_id)
+    return build_fingerprint(text, urls, phones, media)
+
+
+async def punish(bot, message, reason):
+    chat_id, user = message.chat_id, message.from_user
+    try:
+        await bot.delete_message(chat_id, message.message_id)
     except Exception as exc:
         log.warning("Delete failed: %s", exc)
 
-    if warn:
-        warnings = add_warning(chat_id, user_id, reason)
-        if warnings >= AUTO_MUTE_AFTER:
-            try:
-                until = datetime.now(timezone.utc) + timedelta(minutes=AUTO_MUTE_MINUTES)
-                await tg_app.bot.restrict_chat_member(
-                    chat_id=chat_id,
-                    user_id=user_id,
-                    permissions=READ_ONLY_PERMISSIONS,
-                    until_date=until,
-                )
-            except Exception as exc:
-                log.warning("Auto mute failed: %s", exc)
+    count = await store.add_violation(chat_id, user.id, reason, VIOLATION_WINDOW_HOURS)
+    action = violation_action(count)
+    log.info("violation user=%s reason=%s count=%s action=%s", user.id, reason, count, action)
+    await store.log_event(chat_id, user.id, action, reason, message.message_id)
+    if action == "warn":
+        await send_temporary(
+            bot, chat_id,
+            f"⚠️ {user.mention_html()}, mesaj șters ({reason}). Avertisment {count - 1}/2 — "
+            f"la următoarea abatere primești mute {MUTE_MINUTES} de minute.",
+            NOTICE_TTL_SECONDS)
+    elif action == "mute":
+        until = datetime.now(timezone.utc) + timedelta(minutes=MUTE_MINUTES)
+        try:
+            await bot.restrict_chat_member(
+                chat_id, user.id, READ_ONLY, until_date=until, use_independent_chat_permissions=True)
+        except Exception as exc:
+            log.warning("Mute failed: %s", exc)
+        await send_temporary(
+            bot, chat_id,
+            f"🔇 {user.mention_html()} are mute {MUTE_MINUTES} de minute ({reason}).",
+            NOTICE_TTL_SECONDS)
 
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def maybe_cleanup():
+    global _last_cleanup
+    if time.monotonic() - _last_cleanup < 3600:
+        return
+    _last_cleanup = time.monotonic()
+    keep_hours = max(DUPLICATE_COOLDOWN_HOURS, GIF_WINDOW_SECONDS / 3600)
+    await store.cleanup(keep_hours)
+
+
+async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message = update.effective_message
-    if not message or not message.from_user or not update.effective_chat:
+    if not message or message.chat_id != GROUP_CHAT_ID or message.is_automatic_forward:
+        return  # automatic forwards are posts from the group's linked channel
+    bot = context.bot
+
+    if message.sender_chat:
+        if message.sender_chat.id == GROUP_CHAT_ID:
+            return  # an admin posting anonymously
+        # Posting "as a channel" would sidestep every per-user rule.
+        try:
+            await bot.delete_message(message.chat_id, message.message_id)
+        except Exception:
+            pass
+        await store.log_event(GROUP_CHAT_ID, message.sender_chat.id, "delete", "postare ca un canal",
+                              message.message_id)
         return
 
-    # Ignore channel posts / anonymous admin messages for now.
     user = message.from_user
-    if user.is_bot:
+    if not user or user.is_bot or await is_admin(bot, GROUP_CHAT_ID, user.id):
         return
 
-    chat_id = message.chat_id
-    user_id = user.id
-
-    # Admins are allowed through the filters.
-    if is_admin(chat_id, user_id):
+    member = await store.get_member(GROUP_CHAT_ID, user.id)
+    if member is None:
+        # The bot never saw her join, so she was in the group before it: she keeps posting.
+        member = await store.add_member(GROUP_CHAT_ID, user, unlocked=True, legacy=True)
+    if not member["unlocked"]:
+        # Telegram should already stop her; this covers the moment before the restriction lands.
+        try:
+            await bot.delete_message(message.chat_id, message.message_id)
+        except Exception:
+            pass
+        await store.log_event(GROUP_CHAT_ID, user.id, "delete", "fără drept de postare", message.message_id)
         return
 
-    # Users who aren't unlocked should not normally be able to send messages.
-    # If Telegram delivered one before restriction was applied, delete it.
-    if not is_unlocked(chat_id, user_id):
-        await delete_message(message, "posting before unlock", warn=False)
+    fp = fingerprint_of(message)
+    is_gif = message.animation is not None
+    if is_gif and await store.recent_gif_count(GROUP_CHAT_ID, user.id, GIF_WINDOW_SECONDS) >= GIF_MAX_IN_WINDOW:
+        await punish(bot, message, "prea multe GIF-uri la rând")
         return
 
-    text = message.text or message.caption or ""
-    normalized = normalize_text(text)
-    url = extract_first_url(text)
-    photo_id = photo_unique_id(message)
-    is_gif = message_has_gif(message)
-
-    # Telegram represents a GIF as an Animation. A single message can contain
-    # only one animation, so "max 1 GIF/message" is effectively enforced by
-    # Telegram itself. We additionally prevent GIF spam across consecutive
-    # messages.
-    if is_gif and recent_gif_count(chat_id, user_id) >= GIF_MAX_IN_WINDOW:
-        await delete_message(message, "too many GIFs", warn=True)
+    earlier = await store.recent_fingerprints(GROUP_CHAT_ID, user.id, DUPLICATE_COOLDOWN_HOURS)
+    reason = duplicate_reason(fp, earlier, SIMILARITY_THRESHOLD)
+    if reason:
+        await punish(bot, message, f"reclamă repetată: {reason}")
         return
 
-    # Duplicate / near-duplicate promotion.
-    if check_duplicate(chat_id, user_id, normalized, photo_id, url):
-        await delete_message(message, "duplicate promotion", warn=True)
-        return
+    await store.save_message(GROUP_CHAT_ID, user.id, message.message_id, fp, is_gif)
+    await maybe_cleanup()
 
-    save_message(
-        chat_id, user_id, message.message_id,
-        normalized, photo_id, url, is_gif
-    )
+
+# ------------------------------------------------------------
+# Help desk: private chat <-> support chat
+# ------------------------------------------------------------
+async def on_private_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message, user, bot = update.effective_message, update.effective_user, context.bot
+    if not SUPPORT_CHAT_ID:
+        await message.reply_text("Momentan nu putem primi mesaje aici. Scrie-ne pe approape.ro.")
+        return
+    header = await bot.send_message(
+        SUPPORT_CHAT_ID,
+        f"📩 {user.full_name}" + (f" (@{user.username})" if user.username else "") + f" · id {user.id}\n"
+        "Răspunde cu reply la mesajul de mai jos.")
+    copy = await bot.copy_message(SUPPORT_CHAT_ID, message.chat_id, message.message_id)
+    await store.save_support_thread(header.message_id, user.id)
+    await store.save_support_thread(copy.message_id, user.id)
+
+    last = _support_ack_at.get(user.id, 0)
+    if time.monotonic() - last > 1800:
+        _support_ack_at[user.id] = time.monotonic()
+        await message.reply_text("Am primit mesajul. Îți răspundem aici cât de repede putem.")
+
+
+async def on_support_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    message = update.effective_message
+    if not message.reply_to_message:
+        return
+    user_id = await store.support_user_for(message.reply_to_message.message_id)
+    if not user_id:
+        return
+    try:
+        await context.bot.copy_message(user_id, message.chat_id, message.message_id)
+    except Exception as exc:
+        await message.reply_text(f"Nu am putut trimite răspunsul: {exc}")
 
 
 # ------------------------------------------------------------
 # Admin commands
 # ------------------------------------------------------------
-async def admin_check(update: Update):
-    if not update.effective_chat or not update.effective_user:
-        return False
-
-    member = await tg_app.bot.get_chat_member(
-        update.effective_chat.id, update.effective_user.id
-    )
-    return member.status in ("administrator", "creator")
-
-
-async def setup_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await admin_check(update):
+async def cmd_chatid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat = update.effective_chat
+    if chat.type != "private" and not await is_admin(context.bot, chat.id, update.effective_user.id):
         return
-
-    chat_id = update.effective_chat.id
-    user = update.effective_user
-    conn = db()
-    conn.execute(
-        "INSERT INTO users(chat_id,user_id,username,first_name,is_admin,unlocked,joined_at)"
-        " VALUES(?,?,?,?,1,1,?) "
-        "ON CONFLICT(chat_id,user_id) DO UPDATE SET is_admin=1,unlocked=1",
-        (chat_id, user.id, user.username, user.first_name, now_iso())
-    )
-    conn.commit()
-    conn.close()
-    await update.message.reply_text("👑 Ești setat ca admin al botului.")
+    await update.effective_message.reply_text(f"chat id: {chat.id}")
 
 
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await admin_check(update):
+async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_admin(context.bot, GROUP_CHAT_ID, update.effective_user.id):
         return
+    s = await store.stats(GROUP_CHAT_ID)
+    await update.effective_message.reply_text(
+        f"📊 Membri urmăriți: {s['members']}\nPot posta: {s['unlocked']}\n"
+        f"Invitații: {s['invites']}\nAbateri (7 zile): {s['violations_7d']}")
 
-    chat_id = update.effective_chat.id
-    conn = db()
-    members = conn.execute(
-        "SELECT COUNT(*) n FROM users WHERE chat_id=?", (chat_id,)
-    ).fetchone()["n"]
-    unlocked = conn.execute(
-        "SELECT COUNT(*) n FROM users WHERE chat_id=? AND unlocked=1", (chat_id,)
-    ).fetchone()["n"]
-    invites = conn.execute(
-        "SELECT COUNT(*) n FROM invites WHERE chat_id=?", (chat_id,)
-    ).fetchone()["n"]
-    warnings = conn.execute(
-        "SELECT COUNT(*) n FROM warnings WHERE chat_id=?", (chat_id,)
-    ).fetchone()["n"]
-    conn.close()
 
-    await update.message.reply_text(
-        f"📊 Stats\n\n"
-        f"Members tracked: {members}\n"
-        f"Unlocked: {unlocked}\n"
-        f"Invites: {invites}\n"
-        f"Warnings: {warnings}"
-    )
+def build_application():
+    application = Application.builder().token(BOT_TOKEN).updater(None).build()
+    private = filters.ChatType.PRIVATE
+    group = filters.Chat(GROUP_CHAT_ID) if GROUP_CHAT_ID else filters.ChatType.GROUPS
+    support = filters.Chat(SUPPORT_CHAT_ID) if SUPPORT_CHAT_ID else filters.NONE
+
+    application.add_handler(CommandHandler("chatid", cmd_chatid))
+    application.add_handler(CommandHandler("stats", cmd_stats, filters=group))
+    application.add_handler(CommandHandler("start", cmd_start, filters=private & ~support))
+    application.add_handler(CommandHandler(["invite", "status"], invite_status, filters=private & ~support))
+    application.add_handler(CommandHandler(["invite", "status"], cmd_group_redirect, filters=group))
+    application.add_handler(MessageHandler(support & ~filters.COMMAND, on_support_reply))
+    application.add_handler(MessageHandler(private & ~support & ~filters.COMMAND, on_private_message))
+    application.add_handler(ChatMemberHandler(on_chat_member, ChatMemberHandler.CHAT_MEMBER))
+    # Separate handler group so every group message is moderated, commands included:
+    # otherwise "/anything <ad>" would slip past the filters.
+    application.add_handler(MessageHandler(group & ~filters.StatusUpdate.ALL, on_group_message), group=1)
+    return application
 
 
 # ------------------------------------------------------------
-# FastAPI webhook
+# Web server (Render) + webhook
 # ------------------------------------------------------------
+app = FastAPI()
+tg_app = None
+
+
 @app.get("/")
 async def health():
     return {"ok": True, "service": "telegram-group-bot"}
@@ -626,78 +458,45 @@ async def health():
 
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
-    # Telegram's secret_token is sent as this header.
-    if WEBHOOK_SECRET:
-        received = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if received != WEBHOOK_SECRET:
-            return {"ok": False}
-
-    data = await request.json()
-    update = Update.de_json(data, tg_app.bot)
+    received = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    if not hmac.compare_digest(received, WEBHOOK_SECRET):
+        return Response(status_code=403)
+    update = Update.de_json(await request.json(), tg_app.bot)
     await tg_app.process_update(update)
     return {"ok": True}
 
 
-async def on_startup():
-    init_db()
-
-    if not WEBHOOK_URL:
-        log.warning("WEBHOOK_URL is not set. Webhook will not be registered.")
-        return
-
-    url = f"{WEBHOOK_URL}/telegram/webhook"
-    await tg_app.bot.set_webhook(
-        url=url,
-        secret_token=WEBHOOK_SECRET,
-        allowed_updates=[
-            "message",
-            "chat_member",
-        ],
-    )
-    log.info("Webhook set: %s", url)
-
-
-async def on_shutdown():
-    try:
-        await tg_app.bot.delete_webhook()
-    except Exception:
-        pass
-
-
-# Handlers
-tg_app.add_handler(CommandHandler("start", start))
-tg_app.add_handler(CommandHandler("invite", invite))
-tg_app.add_handler(CommandHandler("status", status))
-tg_app.add_handler(CommandHandler("setupadmin", setup_admin))
-tg_app.add_handler(CommandHandler("stats", stats))
-tg_app.add_handler(
-    ChatMemberHandler(handle_member_update, ChatMemberHandler.CHAT_MEMBER)
-)
-tg_app.add_handler(
-    MessageHandler(filters.ALL & ~filters.COMMAND, handle_message)
-)
-
-
 async def main():
+    global store, tg_app
+    if not DATABASE_URL or len(WEBHOOK_SECRET) < 16:
+        raise SystemExit("DATABASE_URL and WEBHOOK_SECRET (min. 16 caractere) sunt obligatorii.")
+    store = Store(DATABASE_URL)
+    await store.open()
+    tg_app = build_application()
     await tg_app.initialize()
     await tg_app.start()
-    await on_startup()
 
-    config = uvicorn.Config(
-        app,
-        host="0.0.0.0",
-        port=PORT,
-        log_level="info",
-    )
-    server = uvicorn.Server(config)
+    if WEBHOOK_URL:
+        # Set on every start and never deleted on shutdown: Render's free plan
+        # stops the service when idle, and deleting the webhook then would mean
+        # Telegram stops sending updates and nothing ever wakes it up again.
+        await tg_app.bot.set_webhook(
+            url=f"{WEBHOOK_URL}/telegram/webhook", secret_token=WEBHOOK_SECRET,
+            allowed_updates=["message", "chat_member"])
+        log.info("Webhook set")
+    else:
+        log.warning("WEBHOOK_URL is not set; no updates will arrive.")
+    if not GROUP_CHAT_ID:
+        log.warning("GROUP_CHAT_ID is not set; send /chatid in the group to find it.")
+
+    server = uvicorn.Server(uvicorn.Config(app, host="0.0.0.0", port=PORT, log_level="info"))
     try:
         await server.serve()
     finally:
-        await on_shutdown()
         await tg_app.stop()
         await tg_app.shutdown()
+        await store.close()
 
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main())

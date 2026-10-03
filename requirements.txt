@@ -2,3 +2,5 @@ python-telegram-bot==22.5
 fastapi==0.115.12
 uvicorn[standard]==0.34.2
 psycopg[binary,pool]==3.3.6
+# zoneinfo needs tz data; the slim Docker image has none.
+tzdata==2025.2

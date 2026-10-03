@@ -49,6 +49,18 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
 - Anything written to the bot privately reaches `SUPPORT_CHAT_ID`. An admin's **reply**
   to that message goes back to the person.
 
+**Scheduled posts** (2–3 a day, between 10:00 and 23:00 Bucharest time)
+- Profiles and questions alternate. For a profile, the bot tries in this order: a profile
+  created in the last 30 days, last week's most viewed profile (`/api/top-weekly`), or a
+  recommended one (claimed by its owner, recently updated). It posts the main photo, the
+  name, the city and a link tagged `utm_source=telegram`.
+- Only profiles the site lists in its sitemaps are posted, so the site's visibility rules
+  apply as they are; hidden, inactive and away profiles are skipped. A profile is not
+  repeated within 30 days, a question not within 14.
+- Questions are open questions or anonymous polls (`QUESTIONS` in `posts.py`).
+- The bot never posts if nobody has written in the group since its previous post.
+- Driven by `/tick`, see below. Every post is in the `bot_posts` table.
+
 ## Commands
 
 | Command | Where | Who |
@@ -80,6 +92,10 @@ Required:
     GROUP_CHAT_ID=-100...        (from /chatid)
     SUPPORT_CHAT_ID=...          (from /chatid)
 
+For scheduled posts:
+
+    TICK_SECRET=at least 16 random characters, also set in the cron job
+
 Optional (defaults shown):
 
     INVITES_REQUIRED=3
@@ -99,6 +115,20 @@ Telegram (first response ~30–60s; Telegram retries in the meantime). The webho
 every start and **never deleted** on shutdown, otherwise the bot would never wake up.
 All state lives in Postgres, so restarts and redeploys lose nothing. Note: a Supabase
 project with no activity for 7 days gets paused; an active group keeps it awake.
+
+### Scheduled posts: the cron job
+
+Render Free cannot wake itself, so an external cron calls the bot. On
+[cron-job.org](https://cron-job.org) (free), create a job:
+
+- URL: `https://<service>.onrender.com/tick`, every **10 minutes**
+- Advanced → Headers: `X-Tick-Secret: <TICK_SECRET>`
+- Timeout: 30s (the first call after a sleep can take that long)
+
+Each call keeps the service awake, and the bot decides whether to post. An always-on
+service uses ~744 of the 750 free instance hours a month, so it only fits if it is the
+only free service on the Render account. Without `TICK_SECRET`, `/tick` answers 403 and
+nothing is posted.
 
 ## Tests
 

@@ -42,9 +42,9 @@ MUTE_MINUTES = int(os.environ.get("MUTE_MINUTES", "60"))
 PORT = int(os.environ.get("PORT", "10000"))
 
 WELCOME_TTL_SECONDS = 180
-# One message with animated/video stickers per member per day, and two static stickers.
+# Two animated/video sticker messages and two static stickers per member per day.
 STICKER_WINDOW_HOURS = 24
-STATIC_STICKERS_PER_DAY = 2
+STICKERS_PER_DAY = 2
 NOTICE_TTL_SECONDS = 60
 CACHE_TTL_SECONDS = 300
 
@@ -527,29 +527,13 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         is_gif = message.animation is not None
-        # Animated/video stickers and static ones are limited per day, separately.
+        # Animated/video stickers and static ones are limited per day, each counted separately.
         sticker = message.sticker
         is_sticker = bool(sticker and (sticker.is_animated or sticker.is_video))
         is_static_sticker = bool(sticker) and not is_sticker
-        if is_sticker and await store.recent_sticker_count(GROUP_CHAT_ID, user.id, STICKER_WINDOW_HOURS) >= 1:
+        if sticker and await store.recent_sticker_count(
+                GROUP_CHAT_ID, user.id, STICKER_WINDOW_HOURS, static=is_static_sticker) >= STICKERS_PER_DAY:
             # Deleted and explained, but not a violation: no warning, no mute.
-            try:
-                await bot.delete_message(message.chat_id, message.message_id)
-            except Exception:
-                pass
-            await store.log_event(GROUP_CHAT_ID, user.id, "delete", "stickere animate: limita zilnică",
-                                  message.message_id)
-            await send_temporary(
-                bot, GROUP_CHAT_ID,
-                f"{user.mention_html()}, poți trimite un mesaj cu stickere animate pe zi. "
-                f"Ca să postezi oricând, fă-ți cont pe "
-                f'<a href="https://www.approape.ro">approape.ro</a>: mesajele care conțin un link '
-                f"approape.ro (de exemplu profilul tău) nu au nicio limită.",
-                NOTICE_TTL_SECONDS)
-            return
-        if is_static_sticker and await store.recent_sticker_count(
-                GROUP_CHAT_ID, user.id, STICKER_WINDOW_HOURS, static=True) >= STATIC_STICKERS_PER_DAY:
-            # Same treatment as animated ones: deleted and explained, not a violation.
             try:
                 await bot.delete_message(message.chat_id, message.message_id)
             except Exception:
@@ -558,7 +542,7 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                   message.message_id)
             await send_temporary(
                 bot, GROUP_CHAT_ID,
-                f"{user.mention_html()}, poți trimite cel mult {STATIC_STICKERS_PER_DAY} reclame pe zi. "
+                f"{user.mention_html()}, poți trimite cel mult {STICKERS_PER_DAY} reclame pe zi. "
                 f"Mai bine scrie-ne ceva: o întrebare, o recomandare sau o experiență de povestit. "
                 f"Mesajele adevărate țin grupul viu și aduc răspunsuri 🙂",
                 NOTICE_TTL_SECONDS)

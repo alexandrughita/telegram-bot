@@ -292,16 +292,17 @@ def test_second_gif_within_a_minute_is_removed(env, run):
     env.bot.delete_message.assert_awaited_once_with(G, 2)
 
 
-def test_one_animated_sticker_message_a_day(env, run):
+def test_two_animated_sticker_messages_a_day(env, run):
     posting_member(env, run, 90)
     sticker = {"file_id": "s", "file_unique_id": "st1", "width": 512, "height": 512,
                "type": "regular", "is_animated": True, "is_video": False}
     message(env, run, 90, mid=1, sticker=sticker)
+    message(env, run, 90, mid=2, sticker={**sticker, "file_unique_id": "st2"})
     run(env.store._execute("UPDATE messages SET created_at = now() - interval '23 hours'"))
-    message(env, run, 90, mid=2, sticker={**sticker, "file_unique_id": "st2", "is_animated": False, "is_video": True})
-    env.bot.delete_message.assert_awaited_once_with(G, 2)
+    message(env, run, 90, mid=3, sticker={**sticker, "file_unique_id": "st3", "is_animated": False, "is_video": True})
+    env.bot.delete_message.assert_awaited_once_with(G, 3)
     notice = env.bot.send_message.call_args.args[1]
-    assert "un mesaj cu stickere animate pe zi" in notice and "approape.ro" in notice
+    assert "2 reclame pe zi" in notice and "scrie-ne" in notice
     assert events(env, run, 90) == ["delete"]  # not a violation: no warning, no mute
     assert run(env.store._one("SELECT COUNT(*) AS n FROM violations"))["n"] == 0
 
@@ -311,8 +312,9 @@ def test_animated_sticker_allowed_again_after_a_day(env, run):
     sticker = {"file_id": "s", "file_unique_id": "st1", "width": 512, "height": 512,
                "type": "regular", "is_animated": True, "is_video": False}
     message(env, run, 90, mid=1, sticker=sticker)
-    run(env.store._execute("UPDATE messages SET created_at = now() - interval '25 hours'"))
     message(env, run, 90, mid=2, sticker={**sticker, "file_unique_id": "st2"})
+    run(env.store._execute("UPDATE messages SET created_at = now() - interval '25 hours'"))
+    message(env, run, 90, mid=3, sticker={**sticker, "file_unique_id": "st3"})
     env.bot.delete_message.assert_not_awaited()
 
 
@@ -336,8 +338,9 @@ def test_static_and_animated_sticker_limits_are_separate(env, run):
     sticker = {"file_id": "s", "file_unique_id": "st1", "width": 512, "height": 512,
                "type": "regular", "is_animated": True, "is_video": False}
     message(env, run, 90, mid=1, sticker=sticker)
-    message(env, run, 90, mid=2, sticker={**sticker, "file_unique_id": "st2", "is_animated": False})
+    message(env, run, 90, mid=2, sticker={**sticker, "file_unique_id": "st2"})
     message(env, run, 90, mid=3, sticker={**sticker, "file_unique_id": "st3", "is_animated": False})
+    message(env, run, 90, mid=4, sticker={**sticker, "file_unique_id": "st4", "is_animated": False})
     env.bot.delete_message.assert_not_awaited()
 
 

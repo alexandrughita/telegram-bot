@@ -46,9 +46,12 @@ QUESTIONS = [
     {"poll": "Ai cont pe approape.ro?",
      "options": ["Da", "Nu încă", "Am încercat și n-a mers"]},
     # Appended, not inserted: questions already posted are remembered by index.
-    {"text": "Hai să creștem grupul cu oameni care chiar sunt interesați 💪 Invitați clienți care au "
-             "cumpărat content sau fete serioase, care nu dau țeapă. Linkul vostru personal îl primiți "
+    {"text": "Ai fost mulțumit de o fată? Adaug-o în grup 💪 Așa se strâng aici fete serioase, care nu "
+             "dau țeapă, iar ceilalți știu la cine să meargă. Linkul tău personal de invitație îl iei "
              "de la @approape_guard_bot."},
+    {"text": "Fetelor: adăugați în grup clienții mulțumiți și pe cei care v-au cumpărat content 💪 Cu cât "
+             "sunt mai mulți oameni interesați aici, cu atât mai mulți ajung la voi. Linkul vostru personal "
+             "de invitație îl luați de la @approape_guard_bot."},
 ]
 
 PHOTO_KEYS = ("url", "src", "photoUrl", "downloadURL")

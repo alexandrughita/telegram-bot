@@ -22,6 +22,9 @@ MIN_GAP = timedelta(hours=3)
 MAX_GAP = timedelta(hours=6)
 NEW_PROFILE_DAYS = 30
 PROFILE_REPEAT_DAYS = 30
+QUESTION_REPEAT_DAYS = 14
+# Questions marked "priority" (inviting people into the group) come back every few days.
+PRIORITY_REPEAT_DAYS = 3
 TRACKING = "utm_source=telegram&utm_medium=bot&utm_campaign=grup"
 
 # Open questions are plain messages people answer in the group; polls are
@@ -46,10 +49,11 @@ QUESTIONS = [
     {"poll": "Ai cont pe approape.ro?",
      "options": ["Da", "Nu încă", "Am încercat și n-a mers"]},
     # Appended, not inserted: questions already posted are remembered by index.
-    {"text": "Ai fost mulțumit de o fată? Adaug-o în grup 💪 Așa se strâng aici fete serioase, care nu "
-             "dau țeapă, iar ceilalți știu la cine să meargă. Linkul tău personal de invitație îl iei "
-             "de la @approape_guard_bot."},
-    {"text": "Fetelor: adăugați în grup clienții mulțumiți, ca să creăm împreună o comunitate interesată "
+    {"priority": True,
+     "text": "Ai fost mulțumit de o fată? Adaug-o în grup, ca să creăm împreună o comunitate interesată "
+             "și interesantă 💪 Linkul tău personal de invitație îl iei de la @approape_guard_bot."},
+    {"priority": True,
+     "text": "Fetelor: adăugați în grup clienții mulțumiți, ca să creăm împreună o comunitate interesată "
              "și interesantă 💪 Linkul vostru personal de invitație îl luați de la @approape_guard_bot."},
 ]
 
@@ -100,10 +104,15 @@ def due(now, next_at, last_post_at, last_human_at):
 # ------------------------------------------------------------
 # What to post
 # ------------------------------------------------------------
-def pick_question(recently_used, rng=random):
-    """A question not among the recently used ones (by index), or any if all were."""
-    fresh = [i for i in range(len(QUESTIONS)) if str(i) not in recently_used]
-    return rng.choice(fresh or list(range(len(QUESTIONS))))
+def pick_question(recently_used, priority_used=frozenset(), rng=random):
+    """A priority question not posted within PRIORITY_REPEAT_DAYS (priority_used) if there is
+    one; otherwise a regular question not among the recently used ones, or any regular one."""
+    due = [i for i, q in enumerate(QUESTIONS) if q.get("priority") and str(i) not in priority_used]
+    if due:
+        return rng.choice(due)
+    regular = [i for i, q in enumerate(QUESTIONS) if not q.get("priority")]
+    fresh = [i for i in regular if str(i) not in recently_used]
+    return rng.choice(fresh or regular)
 
 
 def pick_profile(new, top, recommended, recently_posted, now, rng=random):

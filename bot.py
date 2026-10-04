@@ -649,8 +649,9 @@ async def run_tick(bot):
             await post_profile(bot, kind, profile)
             await store.record_post(GROUP_CHAT_ID, kind, profile.path, now)
         else:
-            used = await store.recent_post_refs(GROUP_CHAT_ID, 14, question=True)
-            index = posts.pick_question(used)
+            used = await store.recent_post_refs(GROUP_CHAT_ID, posts.QUESTION_REPEAT_DAYS, question=True)
+            priority_used = await store.recent_post_refs(GROUP_CHAT_ID, posts.PRIORITY_REPEAT_DAYS, question=True)
+            index = posts.pick_question(used, priority_used)
             await post_question(bot, index)
             await store.record_post(GROUP_CHAT_ID, "question", str(index), now)
         await store.set_time("next_post_at", posts.next_post_time(now))

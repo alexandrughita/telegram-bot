@@ -52,10 +52,10 @@ QUESTIONS = [
     {"priority": True,
      "text": "Ai fost mulțumit de o fată? Adaug-o în grup, ca să creăm împreună o comunitate interesată "
              "și interesantă 💪 Așa se strâng aici fete serioase, care nu dau țeapă, iar ceilalți știu la "
-             "cine să meargă. Linkul tău personal de invitație îl iei de la @approape_guard_bot."},
+             "cine să meargă. O poți adăuga direct sau cu linkul tău de la @approape_guard_bot."},
     {"priority": True,
      "text": "Fetelor: adăugați în grup clienții mulțumiți, ca să creăm împreună o comunitate interesată "
-             "și interesantă 💪 Linkul vostru personal de invitație îl luați de la @approape_guard_bot."},
+             "și interesantă 💪 Îi puteți adăuga direct sau cu linkul vostru de la @approape_guard_bot."},
 ]
 
 PHOTO_KEYS = ("url", "src", "photoUrl", "downloadURL")

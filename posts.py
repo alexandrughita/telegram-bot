@@ -51,7 +51,8 @@ QUESTIONS = [
     # Appended, not inserted: questions already posted are remembered by index.
     {"priority": True,
      "text": "Ai fost mulțumit de o fată? Adaug-o în grup, ca să creăm împreună o comunitate interesată "
-             "și interesantă 💪 Linkul tău personal de invitație îl iei de la @approape_guard_bot."},
+             "și interesantă 💪 Așa se strâng aici fete serioase, care nu dau țeapă, iar ceilalți știu la "
+             "cine să meargă. Linkul tău personal de invitație îl iei de la @approape_guard_bot."},
     {"priority": True,
      "text": "Fetelor: adăugați în grup clienții mulțumiți, ca să creăm împreună o comunitate interesată "
              "și interesantă 💪 Linkul vostru personal de invitație îl luați de la @approape_guard_bot."},

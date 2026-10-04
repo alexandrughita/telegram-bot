@@ -42,8 +42,9 @@ MUTE_MINUTES = int(os.environ.get("MUTE_MINUTES", "60"))
 PORT = int(os.environ.get("PORT", "10000"))
 
 WELCOME_TTL_SECONDS = 180
-# One message with animated/video stickers per member per day.
+# One message with animated/video stickers per member per day, and two static stickers.
 STICKER_WINDOW_HOURS = 24
+STATIC_STICKERS_PER_DAY = 2
 NOTICE_TTL_SECONDS = 60
 CACHE_TTL_SECONDS = 300
 
@@ -526,9 +527,10 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         is_gif = message.animation is not None
-        # Static stickers are left alone; animated and video ones are limited per day.
+        # Animated/video stickers and static ones are limited per day, separately.
         sticker = message.sticker
         is_sticker = bool(sticker and (sticker.is_animated or sticker.is_video))
+        is_static_sticker = bool(sticker) and not is_sticker
         if is_sticker and await store.recent_sticker_count(GROUP_CHAT_ID, user.id, STICKER_WINDOW_HOURS) >= 1:
             # Deleted and explained, but not a violation: no warning, no mute.
             try:
@@ -545,6 +547,22 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"approape.ro (de exemplu profilul tău) nu au nicio limită.",
                 NOTICE_TTL_SECONDS)
             return
+        if is_static_sticker and await store.recent_sticker_count(
+                GROUP_CHAT_ID, user.id, STICKER_WINDOW_HOURS, static=True) >= STATIC_STICKERS_PER_DAY:
+            # Same treatment as animated ones: deleted and explained, not a violation.
+            try:
+                await bot.delete_message(message.chat_id, message.message_id)
+            except Exception:
+                pass
+            await store.log_event(GROUP_CHAT_ID, user.id, "delete", "stickere: limita zilnică",
+                                  message.message_id)
+            await send_temporary(
+                bot, GROUP_CHAT_ID,
+                f"{user.mention_html()}, poți trimite cel mult {STATIC_STICKERS_PER_DAY} reclame pe zi. "
+                f"Mai bine scrie-ne ceva: o întrebare, o recomandare sau o experiență de povestit. "
+                f"Mesajele adevărate țin grupul viu și aduc răspunsuri 🙂",
+                NOTICE_TTL_SECONDS)
+            return
         if is_gif and await store.recent_gif_count(GROUP_CHAT_ID, user.id, GIF_WINDOW_SECONDS) >= GIF_MAX_IN_WINDOW:
             await punish(bot, message, "prea multe GIF-uri la rând")
             return
@@ -555,7 +573,8 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await punish(bot, message, f"reclamă repetată: {reason}")
             return
 
-        await store.save_message(GROUP_CHAT_ID, user.id, message.message_id, fp, is_gif, is_sticker)
+        await store.save_message(GROUP_CHAT_ID, user.id, message.message_id, fp, is_gif, is_sticker,
+                                 is_static_sticker)
         await maybe_cleanup()
 
 

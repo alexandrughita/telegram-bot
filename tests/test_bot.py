@@ -316,12 +316,39 @@ def test_animated_sticker_allowed_again_after_a_day(env, run):
     env.bot.delete_message.assert_not_awaited()
 
 
-def test_static_stickers_are_not_limited(env, run):
+def test_two_static_stickers_a_day(env, run):
     posting_member(env, run, 90)
     sticker = {"file_id": "s", "file_unique_id": "st1", "width": 512, "height": 512,
                "type": "regular", "is_animated": False, "is_video": False}
     message(env, run, 90, mid=1, sticker=sticker)
     message(env, run, 90, mid=2, sticker={**sticker, "file_unique_id": "st2"})
+    run(env.store._execute("UPDATE messages SET created_at = now() - interval '23 hours'"))
+    message(env, run, 90, mid=3, sticker={**sticker, "file_unique_id": "st3"})
+    env.bot.delete_message.assert_awaited_once_with(G, 3)
+    notice = env.bot.send_message.call_args.args[1]
+    assert "2 reclame pe zi" in notice and "scrie-ne" in notice
+    assert events(env, run, 90) == ["delete"]  # not a violation: no warning, no mute
+    assert run(env.store._one("SELECT COUNT(*) AS n FROM violations"))["n"] == 0
+
+
+def test_static_and_animated_sticker_limits_are_separate(env, run):
+    posting_member(env, run, 90)
+    sticker = {"file_id": "s", "file_unique_id": "st1", "width": 512, "height": 512,
+               "type": "regular", "is_animated": True, "is_video": False}
+    message(env, run, 90, mid=1, sticker=sticker)
+    message(env, run, 90, mid=2, sticker={**sticker, "file_unique_id": "st2", "is_animated": False})
+    message(env, run, 90, mid=3, sticker={**sticker, "file_unique_id": "st3", "is_animated": False})
+    env.bot.delete_message.assert_not_awaited()
+
+
+def test_static_sticker_allowed_again_after_a_day(env, run):
+    posting_member(env, run, 90)
+    sticker = {"file_id": "s", "file_unique_id": "st1", "width": 512, "height": 512,
+               "type": "regular", "is_animated": False, "is_video": False}
+    message(env, run, 90, mid=1, sticker=sticker)
+    message(env, run, 90, mid=2, sticker={**sticker, "file_unique_id": "st2"})
+    run(env.store._execute("UPDATE messages SET created_at = now() - interval '25 hours'"))
+    message(env, run, 90, mid=3, sticker={**sticker, "file_unique_id": "st3"})
     env.bot.delete_message.assert_not_awaited()
 
 

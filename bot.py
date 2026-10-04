@@ -299,7 +299,8 @@ async def invite_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if member["unlocked"]:
         state = "✅ Poți posta în grup."
     else:
-        state = (f"Mai ai nevoie de {INVITES_REQUIRED - count} ca să poți posta. Sau pune-ți "
+        state = (f"Mai ai nevoie de {INVITES_REQUIRED - count} (preferabil foști clienți care te recomandă "
+                 f"sau fete care fac web/întâlniri) ca să poți posta. Sau pune-ți "
                  f"Telegramul (@{user.username or 'numele_tău'}) pe profilul tău de pe approape.ro "
                  f"și scrie-mi din nou /start.")
     await update.effective_message.reply_text(
@@ -523,6 +524,7 @@ async def on_group_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await send_temporary(
                 bot, GROUP_CHAT_ID,
                 f"{user.mention_html()}, ca să poți posta, adu {INVITES_REQUIRED} membri "
+                f"(preferabil foști clienți care te recomandă sau fete care fac web/întâlniri) "
                 f"prin linkul tău personal sau pune-ți Telegramul pe profilul tău de pe approape.ro.",
                 NOTICE_TTL_SECONDS, reply_markup=invite_button(bot))
             return

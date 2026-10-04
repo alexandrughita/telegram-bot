@@ -45,6 +45,10 @@ QUESTIONS = [
      "options": ["Mai multe orașe", "Filtre mai bune", "Mai multe recenzii", "Aplicație pe telefon"]},
     {"poll": "Ai cont pe approape.ro?",
      "options": ["Da", "Nu încă", "Am încercat și n-a mers"]},
+    # Appended, not inserted: questions already posted are remembered by index.
+    {"text": "Hai să creștem grupul cu oameni care chiar sunt interesați 💪 Invitați clienți care au "
+             "cumpărat content sau fete serioase, care nu dau țeapă. Linkul vostru personal îl primiți "
+             "de la @approape_guard_bot."},
 ]
 
 PHOTO_KEYS = ("url", "src", "photoUrl", "downloadURL")

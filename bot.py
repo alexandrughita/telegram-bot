@@ -257,6 +257,7 @@ async def on_chat_member(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_temporary(
         bot, GROUP_CHAT_ID,
         f"Bun venit, {user.mention_html()}! Ca să poți posta, adu {INVITES_REQUIRED} membri "
+        f"(preferabil foști clienți care te recomandă sau fete care fac web/întâlniri) "
         f"prin linkul tău personal sau pune-ți Telegramul pe profilul tău de pe approape.ro.",
         WELCOME_TTL_SECONDS, reply_markup=invite_button(bot))
 

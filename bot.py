@@ -29,10 +29,7 @@ GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID") or 0)
 SUPPORT_CHAT_ID = int(os.environ.get("SUPPORT_CHAT_ID") or 0)
 GROUP_INVITE_URL = os.environ.get("GROUP_INVITE_URL", "").strip()
 
-INVITES_REQUIRED = int(os.environ.get("INVITES_REQUIRED", "3"))
 DUPLICATE_COOLDOWN_HOURS = float(os.environ.get("DUPLICATE_COOLDOWN_HOURS", "6"))
-GIF_WINDOW_SECONDS = int(os.environ.get("GIF_WINDOW_SECONDS", "60"))
-GIF_MAX_IN_WINDOW = int(os.environ.get("GIF_MAX_IN_WINDOW", "1"))
 SIMILARITY_THRESHOLD = float(os.environ.get("SIMILARITY_THRESHOLD", "0.92"))
 VIOLATION_WINDOW_HOURS = float(os.environ.get("VIOLATION_WINDOW_HOURS", "48"))
 MUTE_MINUTES = int(os.environ.get("MUTE_MINUTES", "60"))
@@ -44,7 +41,6 @@ CACHE_TTL_SECONDS = 300
 AD_LIMIT = 2
 AD_WINDOW_HOURS = 24
 WEEKLY_AD_REMINDER_DAYS = 7
-STICKER_WINDOW_HOURS = 24
 
 logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -197,45 +193,17 @@ async def on_chat_member(update, context):
     cm = update.chat_member
     if not cm or cm.chat.id != GROUP_CHAT_ID:
         return
+
     old, new, user = cm.old_chat_member, cm.new_chat_member, cm.new_chat_member.user
+
     if old.status in ADMIN_STATUSES or new.status in ADMIN_STATUSES:
         _admin_cache.pop(GROUP_CHAT_ID, None)
+
     if user.is_bot or in_chat(old) or not in_chat(new):
         return
-    bot = context.bot
-    if new.status in ADMIN_STATUSES:
-        await store.add_member(GROUP_CHAT_ID, user, unlocked=True)
-        return
-    whitelisted = await store.is_whitelisted(GROUP_CHAT_ID, user.id)
-    existing = await store.get_member(GROUP_CHAT_ID, user.id)
-    if existing:
-        if existing["unlocked"] or whitelisted:
-            await allow_posting(bot, GROUP_CHAT_ID, user.id)
-        elif not await unlock_for_site_profile(bot, user):
-            await restrict(bot, GROUP_CHAT_ID, user.id)
-        return
-    await store.add_member(GROUP_CHAT_ID, user)
-    can_post = whitelisted or await unlock_for_site_profile(bot, user)
-    if whitelisted:
-        await allow_posting(bot, GROUP_CHAT_ID, user.id)
-    elif not can_post:
-        await restrict(bot, GROUP_CHAT_ID, user.id)
-    inviter_id = inviter = None
-    if cm.invite_link:
-        inviter_id = await store.inviter_for_link(GROUP_CHAT_ID, cm.invite_link.invite_link)
-    elif cm.from_user and cm.from_user.id != user.id and not cm.from_user.is_bot:
-        inviter_id, inviter = cm.from_user.id, cm.from_user
-    if inviter_id and inviter_id != user.id and await store.record_invite(GROUP_CHAT_ID, user.id, inviter_id):
-        await maybe_unlock(bot, inviter_id, inviter)
-    if can_post:
-        return
-    await send_temporary(
-        bot, GROUP_CHAT_ID,
-        f"Bun venit, {user.mention_html()}! Ca să poți posta, adu {INVITES_REQUIRED} membri "
-        f"(preferabil foști clienți care te recomandă sau fete care fac web/întâlniri) "
-        f"prin linkul tău personal sau pune-ți Telegramul pe profilul tău de pe approape.ro.",
-        WELCOME_TTL_SECONDS, reply_markup=invite_button(bot),
-    )
+
+    # Members can post immediately. There is no invite/unlock gate anymore.
+    await store.add_member(GROUP_CHAT_ID, user, unlocked=True)
 
 
 async def invite_status(update, context):
@@ -506,7 +474,7 @@ async def maybe_cleanup():
     if time.monotonic() - _last_cleanup < 3600:
         return
     _last_cleanup = time.monotonic()
-    keep_hours = max(DUPLICATE_COOLDOWN_HOURS, GIF_WINDOW_SECONDS / 3600, AD_WINDOW_HOURS)
+    keep_hours = max(DUPLICATE_COOLDOWN_HOURS, AD_WINDOW_HOURS)
     await store.cleanup(keep_hours)
 
 
@@ -514,7 +482,9 @@ async def on_group_message(update, context):
     message = update.effective_message
     if not message or message.chat_id != GROUP_CHAT_ID or message.is_automatic_forward:
         return
+
     bot = context.bot
+
     if message.from_user and not message.from_user.is_bot:
         await store.set_time("last_human_at", datetime.now(timezone.utc))
 
@@ -525,7 +495,13 @@ async def on_group_message(update, context):
             await bot.delete_message(message.chat_id, message.message_id)
         except Exception:
             pass
-        await store.log_event(GROUP_CHAT_ID, message.sender_chat.id, "delete", "postare ca un canal", message.message_id)
+        await store.log_event(
+            GROUP_CHAT_ID,
+            message.sender_chat.id,
+            "delete",
+            "postare ca un canal",
+            message.message_id,
+        )
         return
 
     user = message.from_user
@@ -535,9 +511,10 @@ async def on_group_message(update, context):
         return
 
     fp = fingerprint_of(message)
-    # approape.ro and all its subdomains are always allowed.
-    # Any external link is an advertisement, even if approape.ro is also present.
+
+    # External links are advertisements. approape.ro is trusted.
     external_link_ad = has_external_link(fp.urls)
+
     sticker = message.sticker
     is_sticker = bool(sticker and (sticker.is_animated or sticker.is_video))
     is_static_sticker = bool(sticker) and not is_sticker
@@ -545,54 +522,74 @@ async def on_group_message(update, context):
     async with _moderation_lock:
         member = await store.get_member(GROUP_CHAT_ID, user.id)
         if member is None:
-            member = await store.add_member(GROUP_CHAT_ID, user, legacy=True)
-        if not member["unlocked"] and not await unlock_for_site_profile(bot, user):
-            try:
-                await bot.delete_message(message.chat_id, message.message_id)
-            except Exception:
-                pass
-            await store.log_event(GROUP_CHAT_ID, user.id, "delete", "fără drept de postare", message.message_id)
-            await restrict(bot, GROUP_CHAT_ID, user.id)
-            await send_temporary(
-                bot, GROUP_CHAT_ID,
-                f"{user.mention_html()}, ca să poți posta, adu {INVITES_REQUIRED} membri "
-                f"sau pune-ți Telegramul pe profilul tău de pe approape.ro.",
-                NOTICE_TTL_SECONDS, reply_markup=invite_button(bot),
+            member = await store.add_member(
+                GROUP_CHAT_ID,
+                user,
+                unlocked=True,
             )
-            return
 
-        # Telegram exposes one sticker per Message. Therefore 3+ stickers are
-        # interpreted as 3 sticker messages by the same user in the rolling 24h window.
-        sticker_count = await store.recent_sticker_count(GROUP_CHAT_ID, user.id, STICKER_WINDOW_HOURS)
-        sticker_ad = bool(sticker and sticker_count >= 2)
-        is_ad = external_link_ad or sticker_ad
+        # Exact repeated text with 15+ normalized characters is an ad.
+        # It therefore consumes one of the 2 advertisements allowed per 24h.
+        earlier = await store.recent_fingerprints(
+            GROUP_CHAT_ID,
+            user.id,
+            DUPLICATE_COOLDOWN_HOURS,
+        )
+
+        exact_text_ad = (
+            len(fp.text) >= 15
+            and any(fp.text == old.text for old in earlier)
+        )
+
+        is_ad = external_link_ad or exact_text_ad
 
         if is_ad and not await handle_ad(bot, message):
             return
 
-        is_gif = message.animation is not None
-        if is_gif and await store.recent_gif_count(GROUP_CHAT_ID, user.id, GIF_WINDOW_SECONDS) >= GIF_MAX_IN_WINDOW:
-            await punish(bot, message, "prea multe GIF-uri la rând")
+        # Other duplicate fingerprints remain moderated normally.
+        # Exact text >=15 was already handled as an advertisement above,
+        # so don't punish it a second time.
+        reason = duplicate_reason(
+            fp,
+            earlier,
+            SIMILARITY_THRESHOLD,
+        )
+        if reason and not exact_text_ad:
+            await punish(
+                bot,
+                message,
+                f"reclamă repetată: {reason}",
+            )
             return
 
-        earlier = await store.recent_fingerprints(GROUP_CHAT_ID, user.id, DUPLICATE_COOLDOWN_HOURS)
-        reason = duplicate_reason(fp, earlier, SIMILARITY_THRESHOLD)
-        if reason:
-            await punish(bot, message, f"reclamă repetată: {reason}")
-            return
+        # GIFs and stickers are allowed and are no longer rate-limited.
+        is_gif = message.animation is not None
 
         await store.save_message(
-            GROUP_CHAT_ID, user.id, message.message_id, fp, is_gif,
-            is_sticker, is_static_sticker, is_ad,
+            GROUP_CHAT_ID,
+            user.id,
+            message.message_id,
+            fp,
+            is_gif,
+            is_sticker,
+            is_static_sticker,
+            is_ad,
         )
+
         if is_ad:
-            new_count = await store.recent_ad_count(GROUP_CHAT_ID, user.id, AD_WINDOW_HOURS)
+            new_count = await store.recent_ad_count(
+                GROUP_CHAT_ID,
+                user.id,
+                AD_WINDOW_HOURS,
+            )
             await send_temporary(
-                bot, GROUP_CHAT_ID,
-                f"📣 {user.mention_html()}, reclama a fost acceptată. Ai folosit {new_count}/{AD_LIMIT} "
-                f"reclame în ultimele 24h.",
+                bot,
+                GROUP_CHAT_ID,
+                f"📣 {user.mention_html()}, reclama a fost acceptată. "
+                f"Ai folosit {new_count}/{AD_LIMIT} reclame în ultimele 24h.",
                 NOTICE_TTL_SECONDS,
             )
+
         await maybe_cleanup()
 
 

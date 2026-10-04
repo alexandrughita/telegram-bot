@@ -83,10 +83,24 @@ def test_old_or_photoless_profiles_are_not_new():
     assert posts.pick_profile([old, no_photo], None, [], set(), now) == (None, None)
 
 
+PRIORITY = {str(i) for i, q in enumerate(posts.QUESTIONS) if q.get("priority")}
+REGULAR = [i for i, q in enumerate(posts.QUESTIONS) if not q.get("priority")]
+
+
 def test_question_is_not_repeated_until_all_were_used():
-    used = {str(i) for i in range(len(posts.QUESTIONS) - 1)}
-    assert posts.pick_question(used) == len(posts.QUESTIONS) - 1
-    assert 0 <= posts.pick_question({str(i) for i in range(len(posts.QUESTIONS))}) < len(posts.QUESTIONS)
+    used = {str(i) for i in REGULAR[:-1]}
+    assert posts.pick_question(used, PRIORITY) == REGULAR[-1]
+    assert posts.pick_question({str(i) for i in REGULAR}, PRIORITY) in REGULAR
+
+
+def test_priority_questions_come_first_when_due():
+    assert len(PRIORITY) == 2
+    first = posts.pick_question(set(), set())
+    assert str(first) in PRIORITY
+    second = posts.pick_question({str(first)}, {str(first)})
+    assert str(second) in PRIORITY and second != first
+    # Both posted within PRIORITY_REPEAT_DAYS: back to the regular rotation.
+    assert posts.pick_question(PRIORITY, PRIORITY) in REGULAR
 
 
 def test_polls_fit_telegram_limits():

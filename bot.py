@@ -18,7 +18,8 @@ from telegram.ext import (
 
 from db import Store
 from moderation import (
-    MIN_TEXT_LENGTH_EXACT, build_fingerprint, duplicate_reason, has_external_link, violation_action,
+    MIN_TEXT_LENGTH_EXACT, build_fingerprint, duplicate_reason, has_external_link, links_to_approape,
+    violation_action,
 )
 import posts
 
@@ -484,8 +485,10 @@ async def on_group_message(update, context):
         return
 
     fp = fingerprint_of(message)
+    if links_to_approape(fp.urls):
+        return  # a link to approape.ro may be posted any time, by anyone in the group
 
-    # External links are advertisements. approape.ro is trusted.
+    # External links are advertisements.
     external_link_ad = has_external_link(fp.urls)
 
     sticker = message.sticker

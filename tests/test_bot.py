@@ -347,11 +347,17 @@ def test_static_sticker_allowed_again_after_a_day(env, run):
     env.bot.delete_message.assert_not_awaited()
 
 
-def test_an_approape_link_is_not_an_ad(env, run):
+def test_a_message_with_an_approape_link_is_exempt_from_every_rule(env, run):
     posting_member(env, run, 90)
-    message(env, run, 90, "Profilul meu: https://www.approape.ro/escorte/ana", mid=1)
-    assert run(env.store.recent_ad_count(G, 90, 24)) == 0
+    for mid in range(1, 4):
+        message(env, run, 90, "Profilul meu: https://www.approape.ro/escorte/ana sună 0722123456", mid=mid)
+    message(env, run, 90, "detalii", mid=4,
+            entities=[{"type": "text_link", "offset": 0, "length": 7, "url": "https://approape.ro/escorte/ana"}])
+    # Telegram marks a bare "approape.ro/..." as a url entity itself.
+    message(env, run, 91, "Nouă aici, vezi approape.ro/creatoare/ana", mid=5,
+            entities=[{"type": "url", "offset": 16, "length": 25}])
     env.bot.delete_message.assert_not_awaited()
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 0
 
 
 def test_a_lookalike_domain_is_not_approape(env, run):

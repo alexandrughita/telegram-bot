@@ -20,6 +20,8 @@ bot's private chat.
   admin. `/unwhitelist` brings the normal rules back. Both are logged in `moderation_events`.
 
 **Moderation** (for everyone except the group's admins, read live from Telegram)
+- A message containing a link to **approape.ro** (or a subdomain, including a link hidden
+  behind text) is exempt from every rule below.
 - **Ads: at most 2 per 24 hours.** An ad is a message with a link outside approape.ro, or
   the same text (≥ 15 characters after normalising) posted again within 24 hours — every
   copy counts, the first one included, so the same text can appear twice a day. The third

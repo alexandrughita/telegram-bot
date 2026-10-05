@@ -5,42 +5,33 @@ bot's private chat.
 
 ## What it does
 
-**Posting rights through invites**
-- New members are read-only until **3 people** join the group through their personal link.
-- Each person has **one** personal link. They get it in the private chat with the bot:
-  a button in the welcome message, or `/invite` in the private chat. A read-only member
-  cannot type anything in the group, so the link can only be delivered there.
-- A join counts for whoever brought the person in: through her personal link, or by
-  adding them by hand ("Add members"). A rejoin, yourself, a bot, or a link the bot did
-  not create never counts. A person counts once, for whoever brought them first.
-- **No invites needed if her Telegram is on her approape.ro profile**: a member whose
-  Telegram username is in the `telegramLink` field of a profile that is not hidden,
-  deleted or banned can post right away. Checked on joining, on her first post, and on
-  `/start` in the private chat (so someone already locked can add it and unlock herself).
-  The list of usernames is read from Firestore and cached for 5 minutes; if it cannot be
-  read, the invite rule applies. Members without a Telegram username cannot match.
-- An invite counts **for good**, even if the invited person leaves later.
-- Members who were in the group **before** the bot need their 3 invites too (marked
-  `legacy`): their first post is deleted, they are restricted and shown their link.
-- An unlocked member who leaves and comes back can post again straight away.
+**Everyone can post** (the 3-invite rule was removed on 2026-10-05)
+- New members and members from before the bot can post straight away. Members the old
+  rule left read-only are lifted once, on the first start after the change
+  (`lift_invite_locks`, logged as `unlock` in `moderation_events`).
+- Invites are still counted, for growth only: each person has one personal link
+  (`/invite` in the private chat), and a first join through it, or being added by hand
+  ("Add members"), counts for whoever brought her. A rejoin, yourself or a bot never counts.
 
 **Whitelist**
 - An admin replies to someone's message with `/whitelist` (or writes `/whitelist <id>`, for
-  someone who cannot post yet): no rule of the bot applies to her any more, the invite
-  requirement included, and any lock or mute she is under is lifted. She does not become an
+  someone who cannot post): no rule of the bot applies to her any more, and any mute she
+  is under is lifted. She does not become an
   admin. `/unwhitelist` brings the normal rules back. Both are logged in `moderation_events`.
 
 **Moderation** (for everyone except the group's admins, read live from Telegram)
-- A message containing a link to **approape.ro** (or a subdomain, including a link hidden
-  behind text) is exempt from every rule below and from the invite requirement. A member
-  Telegram has already restricted still cannot send anything, though.
-- Repeated ad within 6 hours: the same photo/clip, any shared link (including links
-  hidden behind text), the same Romanian mobile number, the same text, or a near-identical
-  text (≥ 40 characters).
-- At most 1 GIF message per 60 seconds (a burst delivered all at once still counts).
-- At most 1 message with animated/video stickers per 24 hours. The next one is deleted with
-  a note recommending an approape.ro account; it is not a violation (no warning, no mute).
-  Static stickers are not limited.
+- **Ads: at most 2 per 24 hours.** An ad is a message with a link outside approape.ro, or
+  the same text (≥ 15 characters after normalising) posted again within 24 hours — every
+  copy counts, the first one included, so the same text can appear twice a day. The third
+  is deleted with a note saying when she can post again; it is not a violation. A week
+  after she hit the limit she gets a private reminder that she can post again.
+- Other repeats within 6 hours are violations: the same photo/clip, the same link
+  (including links hidden behind text), the same Romanian mobile number, or a
+  near-identical text (≥ 40 characters).
+- Stickers: at most 2 static and 2 animated/video per 24 hours, counted separately (a burst
+  delivered all at once still counts). The next one is deleted with a note asking for a
+  real message; it is not a violation.
+- GIFs are not limited.
 - Escalation within 48h: 1st violation = delete only; 2nd and 3rd = delete + warning;
   4th onwards = delete + mute for 60 minutes.
 - Messages posted "as a channel" are deleted; anonymous admins and posts from the linked
@@ -55,7 +46,7 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
 **Help desk**
 - `/start` with no topic shows a menu: *Nu primesc SMS-ul* (answers with the Google sign-in
   workaround), *Revendicare profil* (same as the `revendicare` topic below, support is
-  alerted), *Cum pot posta în grup* (personal link + progress), *Telegram pe profilul meu*
+  alerted), *Cum pot posta în grup* (the rules + her invite link), *Telegram pe profilul meu*
   (where to add it on the site), *Vorbește cu un om*. Only what the buttons cannot answer
   reaches a person.
 - The site's help links open the private chat as `https://t.me/approape_guard_bot?start=<topic>`:
@@ -83,13 +74,13 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
 
 | Command | Where | Who |
 |---|---|---|
-| `/start` | private | anyone — help menu (`?start=invite` → personal link + progress) |
-| `/invite`, `/status` | private | anyone — personal link + progress |
+| `/start` | private | anyone — help menu (`?start=invite` → rules + invite link) |
+| `/invite`, `/status` | private | anyone — rules + invite link and how many she brought |
 | `/invite`, `/status` | group | button to the private chat |
 | `/stats` | group | admins |
 | `/whitelist`, `/unwhitelist` | group, as a reply to the person or with her id | admins |
-| `/info` | group (reply or id) or private (id) | admins — why she can or cannot post: status, invites, Telegram on a site profile, violations, last 5 actions |
-| `/unlock` | group (reply or id) or private (id) | admins — may post without invites; unlike `/whitelist`, every other rule still applies; also lifts a mute |
+| `/info` | group (reply or id) or private (id) | admins — status in the group, invites brought, ads used in 24h, violations |
+| `/unlock` | group (reply or id) or private (id) | admins — lifts a mute; unlike `/whitelist`, every other rule still applies |
 | `/chatid` | anywhere | group admins / anyone in private |
 
 ## Setup
@@ -120,10 +111,7 @@ For scheduled posts:
 
 Optional (defaults shown):
 
-    INVITES_REQUIRED=3
     DUPLICATE_COOLDOWN_HOURS=6
-    GIF_WINDOW_SECONDS=60
-    GIF_MAX_IN_WINDOW=1
     SIMILARITY_THRESHOLD=0.92
     VIOLATION_WINDOW_HOURS=48
     MUTE_MINUTES=60

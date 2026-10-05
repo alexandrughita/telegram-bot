@@ -70,14 +70,11 @@ def env(run, monkeypatch):
     bot.store = store
     bot._admin_cache.clear()
     bot._permissions_cache.clear()
-    bot._site_handles = None
-    site_handles = set()  # usernames published on approape.ro profiles, per test
-    monkeypatch.setattr(bot.posts, "fetch_telegram_handles", AsyncMock(side_effect=lambda: set(site_handles)))
     bot._support_ack_at.clear()
     bot._moderation_lock = asyncio.Lock()  # each test runs on its own event loop
     bot._tick_lock = asyncio.Lock()
     fake = FakeBot()
-    yield SimpleNamespace(bot=fake, store=store, ctx=SimpleNamespace(bot=fake, args=[]), site_handles=site_handles)
+    yield SimpleNamespace(bot=fake, store=store, ctx=SimpleNamespace(bot=fake, args=[]))
     run(asyncio.sleep(0))
     run(store.close())
 
@@ -130,22 +127,6 @@ def private_command(env, run, uid, text, username=None):
     return upd
 
 
-def test_three_joins_through_her_link_unlock_her(env, run):
-    join(env, run, 50)  # she joins herself first, so she is a tracked, locked member
-    upd = private_command(env, run, 50, "/invite")
-    run(bot.invite_status(upd, env.ctx))
-    link = run(env.store.get_invite_link(G, 50))
-    assert link and link in env.bot.send_message.call_args.kwargs["text"]
-
-    for invited in (61, 62):
-        join(env, run, invited, link=link)
-    assert not env.bot.posting_unlocked(50)
-    join(env, run, 63, link=link)
-    assert env.bot.posting_unlocked(50)
-    assert run(env.store.get_member(G, 50))["unlocked"]
-    assert events(env, run, 50) == ["unlock"]
-    to_her = [c.args[1] for c in env.bot.send_message.call_args_list if c.args and c.args[0] == 50]
-    assert to_her == [f"✅ Ai adus {bot.INVITES_REQUIRED} membri — acum poți posta în grup."]
 
 
 def events(env, run, uid):
@@ -172,15 +153,10 @@ def test_rejoin_self_invite_and_bots_earn_nothing(env, run):
 
 
 def test_members_added_by_hand_count_for_whoever_added_them(env, run):
-    # A member from before the bot, unknown to it, adds three people by hand.
-    join(env, run, 120, by=110)
-    join(env, run, 121, by=110)
-    assert not run(env.store.get_member(G, 110))["unlocked"]
-    join(env, run, 122, by=110)
-    assert env.bot.posting_unlocked(110)
-    assert run(env.store.get_member(G, 110))["legacy"]
-    message(env, run, 110, "salut, am adus oameni")
-    env.bot.delete_message.assert_not_awaited()
+    for invited in (120, 121, 122):
+        join(env, run, invited, by=110)
+    assert run(env.store.invite_count(G, 110)) == 3
+    env.bot.restrict_chat_member.assert_not_awaited()
 
 
 def test_someone_added_by_hand_counts_once_for_whoever_brought_her_first(env, run):
@@ -190,75 +166,50 @@ def test_someone_added_by_hand_counts_once_for_whoever_brought_her_first(env, ru
     assert run(env.store.invite_count(G, 111)) == 0
 
 
-def test_telegram_on_her_approape_profile_lets_her_post_on_joining(env, run):
-    env.site_handles.add("ana_99")
-    join(env, run, 130, username="Ana_99")
-    assert env.bot.posting_unlocked(130)
-    assert not any(c.args[1:3] == (130, bot.READ_ONLY) for c in env.bot.restrict_chat_member.call_args_list)
-    env.bot.send_message.assert_not_awaited()  # no welcome asking for invites
-    assert events(env, run, 130) == ["unlock"]
 
 
-def test_member_from_before_the_bot_with_telegram_on_her_profile_keeps_posting(env, run):
-    env.site_handles.add("ana_99")
-    message(env, run, 131, "Bună tuturor", username="ana_99")
-    env.bot.delete_message.assert_not_awaited()
-    assert run(env.store.get_member(G, 131))["unlocked"]
 
 
-def test_locked_member_who_adds_telegram_to_her_profile_is_unlocked_by_start(env, run):
-    join(env, run, 132, username="ana_99")
-    run(bot.invite_status(private_command(env, run, 132, "/start", username="ana_99"), env.ctx))
-    assert "@ana_99) pe profilul tău de pe approape.ro" in env.bot.send_message.call_args.kwargs["text"]
-    assert not env.bot.posting_unlocked(132)
-
-    env.site_handles.add("ana_99")
-    bot._site_handles = None  # the 5-minute cache has expired
-    run(bot.invite_status(private_command(env, run, 132, "/start", username="ana_99"), env.ctx))
-    assert env.bot.posting_unlocked(132)
-    assert "acum poți posta" in env.bot.send_message.call_args.kwargs["text"]
 
 
-def test_member_without_username_or_handle_on_a_profile_still_needs_invites(env, run):
-    env.site_handles.add("altcineva")
-    join(env, run, 133)
-    join(env, run, 134, username="ana_99")
-    assert not env.bot.posting_unlocked(133) and not env.bot.posting_unlocked(134)
 
 
-def test_new_member_is_restricted_and_her_posts_deleted(env, run):
+def test_new_member_can_post_without_invites(env, run):
     join(env, run, 80)
-    assert env.bot.restrict_chat_member.call_args.args[1:3] == (80, bot.READ_ONLY)
+    env.bot.restrict_chat_member.assert_not_awaited()
+    env.bot.send_message.assert_not_awaited()  # no welcome asking for invites
     message(env, run, 80, "salut")
-    env.bot.delete_message.assert_awaited_with(G, 10)
-    assert events(env, run, 80) == ["delete"]
+    env.bot.delete_message.assert_not_awaited()
 
 
-def test_member_from_before_the_bot_is_locked_until_three_invites(env, run):
+def test_joining_through_her_link_still_credits_her(env, run):
+    run(bot.invite_status(private_command(env, run, 50, "/invite"), env.ctx))
+    link = run(env.store.get_invite_link(G, 50))
+    assert link in env.bot.send_message.call_args.kwargs["text"]
+    join(env, run, 61, link=link)
+    assert run(env.store.invite_count(G, 50)) == 1
+    assert "Ai adus: 0" in env.bot.send_message.call_args.kwargs["text"]
+
+
+def test_member_from_before_the_bot_can_post(env, run):
     message(env, run, 90, "Bună tuturor, sunt aici de mult timp")
-    env.bot.delete_message.assert_awaited_with(G, 10)
-    assert env.bot.restrict_chat_member.call_args.args[1:3] == (90, bot.READ_ONLY)
-    assert "3 membri" in env.bot.send_message.call_args.args[1]
-    member = run(env.store.get_member(G, 90))
-    assert member["legacy"] and not member["unlocked"]
-
-    run(bot.invite_status(private_command(env, run, 90, "/invite"), env.ctx))
-    link = run(env.store.get_invite_link(G, 90))
-    for invited in (91, 92, 93):
-        join(env, run, invited, link=link)
-    assert env.bot.posting_unlocked(90)
+    env.bot.delete_message.assert_not_awaited()
+    env.bot.restrict_chat_member.assert_not_awaited()
 
 
-def test_member_from_before_the_bot_asking_for_her_link_is_still_locked(env, run):
-    run(bot.invite_status(private_command(env, run, 90, "/invite"), env.ctx))
-    assert not run(env.store.get_member(G, 90))["unlocked"]
-    assert "Mai ai nevoie de 3" in env.bot.send_message.call_args.kwargs["text"]
+def test_members_the_old_invite_rule_locked_are_lifted_once(env, run):
+    run(env.store.add_member(G, SimpleNamespace(id=90, username=None, first_name="U90"), legacy=True))
+    posting_member(env, run, 91)
+    run(bot.lift_invite_locks(env.bot))
+    assert env.bot.posting_unlocked(90) and not env.bot.posting_unlocked(91)
+    assert run(env.store.get_member(G, 90))["unlocked"]
+    assert events(env, run, 90) == ["unlock"]
+    run(bot.lift_invite_locks(env.bot))  # every restart: nothing left to lift
+    assert env.bot.restrict_chat_member.await_count == 1
 
 
-def test_unlocked_member_who_rejoins_can_post_again(env, run):
-    posting_member(env, run, 90)
-    join(env, run, 90)
-    assert env.bot.posting_unlocked(90)
+
+
 
 
 def test_admin_is_never_moderated_even_untracked(env, run):
@@ -283,13 +234,54 @@ def test_repeated_ad_escalates_delete_warn_warn_mute(env, run):
     assert events(env, run, 90) == ["delete", "warn", "warn", "mute"]
 
 
-def test_second_gif_within_a_minute_is_removed(env, run):
+def test_gifs_are_not_limited(env, run):
     posting_member(env, run, 90)
-    gif = {"file_id": "a", "file_unique_id": "gif1", "width": 1, "height": 1, "duration": 1}
-    message(env, run, 90, mid=1, animation=gif, document={"file_id": "a", "file_unique_id": "gif1"})
-    gif2 = {**gif, "file_unique_id": "gif2"}
-    message(env, run, 90, mid=2, animation=gif2, document={"file_id": "b", "file_unique_id": "gif2"})
-    env.bot.delete_message.assert_awaited_once_with(G, 2)
+    for mid in (1, 2, 3):
+        gif = {"file_id": "a", "file_unique_id": f"gif{mid}", "width": 1, "height": 1, "duration": 1}
+        message(env, run, 90, mid=mid, animation=gif, document={"file_id": "a", "file_unique_id": f"gif{mid}"})
+    env.bot.delete_message.assert_not_awaited()
+
+
+AD = "Acesta este un anunt suficient de lung"
+
+
+def test_the_same_text_is_allowed_twice_a_day_counting_the_first(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, AD, mid=1)
+    message(env, run, 90, AD, mid=2)
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 2
+    message(env, run, 90, AD, mid=3)
+    env.bot.delete_message.assert_awaited_once_with(G, 3)
+    assert "limita de 2 reclame" in last_text(env)
+    assert run(env.store._one("SELECT COUNT(*) AS n FROM violations"))["n"] == 0
+
+
+def test_the_same_text_hours_apart_still_counts(env, run):
+    # The duplicate check only looks back 6h; the ad limit must see the whole day.
+    posting_member(env, run, 90)
+    message(env, run, 90, AD, mid=1)
+    run(env.store._execute("UPDATE messages SET created_at = now() - interval '7 hours'"))
+    message(env, run, 90, AD, mid=2)
+    run(env.store._execute("UPDATE messages SET created_at = now() - interval '7 hours' WHERE message_id = 2"))
+    message(env, run, 90, AD, mid=3)
+    env.bot.delete_message.assert_awaited_once_with(G, 3)
+
+
+def test_the_same_text_is_allowed_again_after_a_day(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, AD, mid=1)
+    message(env, run, 90, AD, mid=2)
+    run(env.store._execute("UPDATE messages SET created_at = now() - interval '25 hours'"))
+    message(env, run, 90, AD, mid=3)
+    env.bot.delete_message.assert_not_awaited()
+
+
+def test_short_or_emoji_repeats_are_not_ads(env, run):
+    posting_member(env, run, 90)
+    for mid in (1, 2, 3):
+        message(env, run, 90, "🔥🔥🔥❤️❤️", mid=mid)
+        message(env, run, 90, "mersi", mid=mid + 10)
+    env.bot.delete_message.assert_not_awaited()
 
 
 def test_two_animated_sticker_messages_a_day(env, run):
@@ -362,9 +354,10 @@ def test_a_message_with_an_approape_link_is_exempt_from_every_rule(env, run):
     message(env, run, 90, "detalii", mid=4,
             entities=[{"type": "text_link", "offset": 0, "length": 7, "url": "https://approape.ro/escorte/ana"}])
     # Telegram marks a bare "approape.ro/..." as a url entity itself.
-    message(env, run, 91, "Nouă aici, vezi approape.ro/creatoare/ana", mid=5,  # locked, pre-bot
+    message(env, run, 91, "Nouă aici, vezi approape.ro/creatoare/ana", mid=5,
             entities=[{"type": "url", "offset": 16, "length": 25}])
     env.bot.delete_message.assert_not_awaited()
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 0
 
 
 def test_a_lookalike_domain_is_not_approape(env, run):
@@ -374,16 +367,19 @@ def test_a_lookalike_domain_is_not_approape(env, run):
     env.bot.delete_message.assert_awaited_once_with(G, 2)
 
 
-def test_gifs_arriving_together_are_still_limited(env, run):
+def test_stickers_arriving_together_are_still_limited(env, run):
     # Telegram delivers a backlog (e.g. when Render wakes up) over parallel
     # webhook requests, so the handlers run concurrently.
     posting_member(env, run, 90)
-    updates = [gif_update(90, mid, f"gif{mid}") for mid in range(1, 5)]
+    updates = [Update.de_json({"update_id": mid, "message": {
+        "message_id": mid, "date": 0, "from": user(90), "chat": {"id": G, "type": "supergroup"},
+        "sticker": {"file_id": "s", "file_unique_id": f"st{mid}", "width": 512, "height": 512,
+                    "type": "regular", "is_animated": False, "is_video": False}}}, None) for mid in range(1, 5)]
 
     async def burst():
         await asyncio.gather(*(bot.on_group_message(u, env.ctx) for u in updates))
     run(burst())
-    assert env.bot.delete_message.await_count == 3
+    assert env.bot.delete_message.await_count == 2
 
 
 def test_hidden_link_counts_as_a_link(env, run):
@@ -543,7 +539,7 @@ def group_command(env, run, uid, text, reply_to_uid=None, handler=None):
 def test_whitelisted_member_skips_every_rule(env, run):
     group_command(env, run, ADMIN_ID, "/whitelist", reply_to_uid=90)
     assert env.bot.posting_unlocked(90)  # a lock or mute she had is lifted
-    for mid in range(1, 5):  # locked pre-bot member, repeated ad, phone number
+    for mid in range(1, 5):  # repeated ad, phone number
         message(env, run, 90, "Același anunț, sună 0722123456", mid=mid)
     env.bot.delete_message.assert_not_awaited()
     assert events(env, run, 90) == ["whitelist"]
@@ -552,8 +548,9 @@ def test_whitelisted_member_skips_every_rule(env, run):
 def test_unwhitelist_brings_the_rules_back(env, run):
     group_command(env, run, ADMIN_ID, "/whitelist 90")
     group_command(env, run, ADMIN_ID, "/unwhitelist", reply_to_uid=90)
-    message(env, run, 90, "salut")  # never earned her invites: deleted again
-    env.bot.delete_message.assert_awaited_with(G, 10)
+    for mid in (1, 2, 3):
+        message(env, run, 90, AD, mid=mid)
+    env.bot.delete_message.assert_awaited_once_with(G, 3)
     assert events(env, run, 90)[:2] == ["whitelist", "unwhitelist"]
 
 
@@ -567,12 +564,6 @@ def test_whitelist_without_a_target_explains_how(env, run):
     assert "Dă reply" in env.bot.send_message.call_args.args[1]
 
 
-def test_whitelisted_person_joining_can_post_straight_away(env, run):
-    group_command(env, run, ADMIN_ID, "/whitelist 95")
-    env.bot.restrict_chat_member.reset_mock()
-    join(env, run, 95)
-    assert env.bot.posting_unlocked(95)
-    assert not any(c.args[2] is bot.READ_ONLY for c in env.bot.restrict_chat_member.call_args_list)
 
 
 def test_whitelisted_private_status(env, run):
@@ -625,12 +616,13 @@ def test_menu_back_shows_the_menu_again(env, run):
 
 
 # ---- /info and /unlock ----------------------------------------------------
-def test_info_explains_why_she_cannot_post(env, run):
-    message(env, run, 90, "salut")  # pre-bot member, locked on her first post
+def test_info_shows_her_ads_and_invites(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, AD, mid=1)
+    message(env, run, 90, AD, mid=2)
     group_command(env, run, ADMIN_ID, "/info", reply_to_uid=90, handler=bot.cmd_info)
     text = last_text(env)
-    for part in ("Nu poate posta încă", "înainte de bot", f"Invitații: 0/{bot.INVITES_REQUIRED}",
-                 "approape.ro: nu", "delete — fără drept de postare"):
+    for part in ("În grup: member", "A adus: 0", "Reclame în ultimele 24h: 2/2"):
         assert part in text, part
 
 
@@ -641,14 +633,12 @@ def test_info_and_unlock_are_admin_only(env, run):
     env.bot.restrict_chat_member.assert_not_awaited()
 
 
-def test_unlock_lets_her_post_but_keeps_the_other_rules(env, run):
+def test_unlock_lifts_a_mute_but_keeps_the_other_rules(env, run):
     group_command(env, run, ADMIN_ID, "/unlock 91", handler=bot.cmd_unlock)
     assert env.bot.posting_unlocked(91)
-    assert run(env.store.get_member(G, 91))["unlocked"]
-    message(env, run, 91, "Anunț: sună la 0722123456", mid=1)
-    env.bot.delete_message.assert_not_awaited()
-    message(env, run, 91, "Anunț: sună la 0722123456", mid=2)  # same ad again
-    env.bot.delete_message.assert_awaited_with(G, 2)
+    for mid in (1, 2, 3):
+        message(env, run, 91, AD, mid=mid)
+    env.bot.delete_message.assert_awaited_once_with(G, 3)
     assert events(env, run, 91) == ["unlock", "delete"]
 
 

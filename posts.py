@@ -239,44 +239,6 @@ async def _query_escorts(client, limit, order_field=None, slug=None):
             for row in resp.json() if row.get("document")]
 
 
-# Profiles store whatever the owner typed: @handle, a t.me link or a full URL
-# (the site normalizes the same way in src/utils/telegram.ts).
-TELEGRAM_HANDLE = re.compile(
-    r"^(?:(?:https?://)?(?:www\.)?(?:t|telegram)\.me/)?@?([A-Za-z][A-Za-z0-9_]{3,31})/?(?:\?.*)?$",
-    re.IGNORECASE)
-HANDLE_FIELDS = ["telegramLink", "isHidden", "isDeleted", "banned", "suspended", "disabled", "deletedAt"]
-
-
-def telegram_handle(raw):
-    """The lowercased username in a profile's Telegram field, or None (invite links,
-    phone numbers and anything else that does not name one account)."""
-    match = TELEGRAM_HANDLE.match(str(raw or "").strip())
-    return match.group(1).lower() if match else None
-
-
-async def fetch_telegram_handles():
-    """Usernames published on approape.ro profiles that are not hidden, deleted or banned."""
-    query = {
-        "from": [{"collectionId": "escorts"}],
-        "select": {"fields": [{"fieldPath": f} for f in HANDLE_FIELDS]},
-        "where": {"fieldFilter": {"field": {"fieldPath": "telegramLink"}, "op": "NOT_EQUAL",
-                                  "value": {"stringValue": ""}}},
-        "limit": 5000,
-    }
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(FIRESTORE_QUERY, json={"structuredQuery": query})
-        resp.raise_for_status()
-    handles = set()
-    for row in resp.json():
-        fields = {k: _value(v) for k, v in (row.get("document") or {}).get("fields", {}).items()}
-        if any(fields.get(k) for k in HANDLE_FIELDS[1:]):
-            continue
-        handle = telegram_handle(fields.get("telegramLink"))
-        if handle:
-            handles.add(handle)
-    return handles
-
-
 async def fetch_site_profiles(now):
     """(new, top, recommended) — only profiles the site itself lists in its sitemaps,
     so the site's visibility rules are never copied here."""

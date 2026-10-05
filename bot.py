@@ -17,7 +17,10 @@ from telegram.ext import (
 )
 
 from db import Store
-from moderation import build_fingerprint, duplicate_reason, has_external_link, is_approape_url, violation_action
+from moderation import (
+    MIN_TEXT_LENGTH_EXACT, build_fingerprint, duplicate_reason, has_external_link, links_to_approape,
+    violation_action,
+)
 import posts
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
@@ -41,6 +44,9 @@ CACHE_TTL_SECONDS = 300
 AD_LIMIT = 2
 AD_WINDOW_HOURS = 24
 WEEKLY_AD_REMINDER_DAYS = 7
+# Static and animated/video stickers are counted separately, 2 of each per day.
+STICKERS_PER_DAY = 2
+STICKER_WINDOW_HOURS = 24
 
 logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -57,7 +63,6 @@ FALLBACK_POSTING = ChatPermissions(
 )
 _admin_cache = {}
 _permissions_cache = {}
-_site_handles = None
 _support_ack_at = {}
 _background = set()
 _moderation_lock = asyncio.Lock()
@@ -117,13 +122,6 @@ async def posting_permissions(bot, chat_id):
     return cached[1]
 
 
-async def restrict(bot, chat_id, user_id):
-    try:
-        await bot.restrict_chat_member(chat_id, user_id, READ_ONLY, use_independent_chat_permissions=True)
-    except Exception as exc:
-        log.warning("Could not restrict %s: %s", user_id, exc)
-
-
 async def allow_posting(bot, chat_id, user_id):
     try:
         await bot.restrict_chat_member(
@@ -132,29 +130,6 @@ async def allow_posting(bot, chat_id, user_id):
         )
     except Exception as exc:
         log.warning("Could not unlock %s: %s", user_id, exc)
-
-
-async def linked_on_site(user):
-    global _site_handles
-    if not user.username:
-        return False
-    if not _site_handles or _site_handles[0] < time.monotonic():
-        try:
-            handles = await posts.fetch_telegram_handles()
-        except Exception as exc:
-            log.warning("Could not read Telegram handles from site: %s", exc)
-            handles = set()
-        _site_handles = (time.monotonic() + CACHE_TTL_SECONDS, handles)
-    return user.username.lower() in _site_handles[1]
-
-
-async def unlock_for_site_profile(bot, user):
-    if not await linked_on_site(user):
-        return False
-    await store.set_unlocked(GROUP_CHAT_ID, user.id)
-    await allow_posting(bot, GROUP_CHAT_ID, user.id)
-    await store.log_event(GROUP_CHAT_ID, user.id, "unlock", "Telegram pe profilul approape.ro")
-    return True
 
 
 def invite_button(bot):
@@ -172,21 +147,18 @@ async def personal_link(bot, user_id):
     return created.invite_link
 
 
-async def maybe_unlock(bot, inviter_id, inviter=None):
-    member = await store.get_member(GROUP_CHAT_ID, inviter_id)
-    if member is None and inviter:
-        member = await store.add_member(GROUP_CHAT_ID, inviter, legacy=True)
-    if not member or member["unlocked"]:
-        return
-    if await store.invite_count(GROUP_CHAT_ID, inviter_id) < INVITES_REQUIRED:
-        return
-    await store.set_unlocked(GROUP_CHAT_ID, inviter_id)
-    await allow_posting(bot, GROUP_CHAT_ID, inviter_id)
-    await store.log_event(GROUP_CHAT_ID, inviter_id, "unlock", f"{INVITES_REQUIRED} invitații")
+async def lift_invite_locks(bot):
+    """Members the old 3-invite rule left read-only are still restricted in Telegram itself,
+    so dropping the rule in code does not let them post. Idempotent: runs on every start
+    and only touches members still stored as locked."""
     try:
-        await bot.send_message(inviter_id, f"✅ Ai adus {INVITES_REQUIRED} membri — acum poți posta în grup.")
+        for row in await store.locked_members(GROUP_CHAT_ID):
+            await allow_posting(bot, GROUP_CHAT_ID, row["user_id"])
+            await store.set_unlocked(GROUP_CHAT_ID, row["user_id"])
+            await store.log_event(GROUP_CHAT_ID, row["user_id"], "unlock", "regula de 3 invitații scoasă")
+            await asyncio.sleep(0.1)  # stay well under Telegram's rate limit
     except Exception:
-        pass
+        log.exception("Could not lift the old invite locks")
 
 
 async def on_chat_member(update, context):
@@ -202,8 +174,19 @@ async def on_chat_member(update, context):
     if user.is_bot or in_chat(old) or not in_chat(new):
         return
 
-    # Members can post immediately. There is no invite/unlock gate anymore.
+    # Everyone can post as soon as she joins. Invites are still credited, only as a count,
+    # and only for a first join: coming back earns nobody anything.
+    returning = await store.get_member(GROUP_CHAT_ID, user.id) is not None
     await store.add_member(GROUP_CHAT_ID, user, unlocked=True)
+    if returning:
+        return
+    inviter_id = None
+    if cm.invite_link:
+        inviter_id = await store.inviter_for_link(GROUP_CHAT_ID, cm.invite_link.invite_link)
+    elif cm.from_user and cm.from_user.id != user.id and not cm.from_user.is_bot:
+        inviter_id = cm.from_user.id  # added by hand
+    if inviter_id and inviter_id != user.id:
+        await store.record_invite(GROUP_CHAT_ID, user.id, inviter_id)
 
 
 async def invite_status(update, context):
@@ -221,26 +204,17 @@ async def invite_status(update, context):
     if await store.is_whitelisted(GROUP_CHAT_ID, user.id):
         await update.effective_message.reply_text("Ești pe lista albă a grupului — poți posta oricând.")
         return
-    member = await store.get_member(GROUP_CHAT_ID, user.id)
-    if member is None:
-        member = await store.add_member(GROUP_CHAT_ID, user, legacy=True)
-    if not member["unlocked"] and await unlock_for_site_profile(bot, user):
-        await update.effective_message.reply_text(
-            "✅ Telegramul tău e pe profilul tău de pe approape.ro — acum poți posta în grup."
-        )
-        return
     try:
         link = await personal_link(bot, user.id)
     except Exception:
         await update.effective_message.reply_text("Nu pot crea linkul acum. Încearcă din nou mai târziu.")
         return
     count = await store.invite_count(GROUP_CHAT_ID, user.id)
-    state = "✅ Poți posta în grup." if member["unlocked"] else (
-        f"Mai ai nevoie de {max(0, INVITES_REQUIRED-count)} (preferabil foști clienți care te recomandă "
-        f"sau fete care fac web/întâlniri) ca să poți posta. Sau pune-ți Telegramul pe profilul tău de pe approape.ro."
-    )
     await update.effective_message.reply_text(
-        f"🔗 Linkul tău:\n{link}\n\n👥 Invitații: {min(count,INVITES_REQUIRED)}/{INVITES_REQUIRED}\n{state}",
+        f"✅ Poți posta în grup.\n\n"
+        f"Reguli: cel mult {AD_LIMIT} reclame în 24 de ore (linkuri externe sau același text repetat), "
+        f"{STICKERS_PER_DAY} stickere pe zi și fără aceeași poză, link sau număr repostat.\n\n"
+        f"Vrei să aduci pe cineva? 🔗 Linkul tău:\n{link}\n👥 Ai adus: {count}",
         disable_web_page_preview=True,
     )
 
@@ -266,7 +240,7 @@ MENU = [
 ]
 MENU_ANSWERS = {
     "sms": "Când SMS-ul nu vine, intră pe approape.ro cu Google: în fereastra de autentificare alege «Continuă cu Google».",
-    "telegram": "Pune-ți Telegramul pe profil din approape.ro: «Contul meu» → «Telegram» → scrie @numele_tău.\n\nCu Telegramul pe profil poți posta în grup fără invitații.",
+    "telegram": "Pune-ți Telegramul pe profil din approape.ro: «Contul meu» → «Telegram» → scrie @numele_tău.",
     "om": "Scrie-ne aici mesajul tău. Îl primește echipa approape.ro și îți răspundem în această conversație.",
 }
 
@@ -325,7 +299,7 @@ async def on_menu(update, context):
 
 async def cmd_group_redirect(update, context):
     await send_temporary(
-        context.bot, update.effective_chat.id, "Îți arăt linkul și progresul în privat:",
+        context.bot, update.effective_chat.id, "Îți arăt regulile și linkul tău de invitație în privat:",
         NOTICE_TTL_SECONDS, reply_markup=invite_button(context.bot),
     )
 
@@ -511,8 +485,10 @@ async def on_group_message(update, context):
         return
 
     fp = fingerprint_of(message)
+    if links_to_approape(fp.urls):
+        return  # a link to approape.ro may be posted any time, by anyone in the group
 
-    # External links are advertisements. approape.ro is trusted.
+    # External links are advertisements.
     external_link_ad = has_external_link(fp.urls)
 
     sticker = message.sticker
@@ -528,17 +504,32 @@ async def on_group_message(update, context):
                 unlocked=True,
             )
 
-        # Exact repeated text with 15+ normalized characters is an ad.
-        # It therefore consumes one of the 2 advertisements allowed per 24h.
+        if sticker and await store.recent_sticker_count(
+                GROUP_CHAT_ID, user.id, STICKER_WINDOW_HOURS, static=is_static_sticker) >= STICKERS_PER_DAY:
+            # Deleted and explained, but not a violation: no warning, no mute.
+            try:
+                await bot.delete_message(message.chat_id, message.message_id)
+            except Exception:
+                pass
+            await store.log_event(GROUP_CHAT_ID, user.id, "delete", "stickere: limita zilnică",
+                                  message.message_id)
+            await send_temporary(
+                bot, GROUP_CHAT_ID,
+                f"{user.mention_html()}, poți trimite cel mult {STICKERS_PER_DAY} reclame pe zi. "
+                f"Mai bine scrie-ne ceva: o întrebare, o recomandare sau o experiență de povestit. "
+                f"Mesajele adevărate țin grupul viu și aduc răspunsuri 🙂",
+                NOTICE_TTL_SECONDS)
+            return
+
+        # Exact repeated text with 15+ normalized characters is an ad. Every copy in the
+        # last 24h counts, the first one included, so 2 ads/24h means 2 copies.
+        exact_text_ad = len(fp.text) >= MIN_TEXT_LENGTH_EXACT and await store.mark_repeated_text_as_ad(
+            GROUP_CHAT_ID, user.id, fp.text, AD_WINDOW_HOURS)
+
         earlier = await store.recent_fingerprints(
             GROUP_CHAT_ID,
             user.id,
             DUPLICATE_COOLDOWN_HOURS,
-        )
-
-        exact_text_ad = (
-            len(fp.text) >= 15
-            and any(fp.text == old.text for old in earlier)
         )
 
         is_ad = external_link_ad or exact_text_ad
@@ -562,7 +553,7 @@ async def on_group_message(update, context):
             )
             return
 
-        # GIFs and stickers are allowed and are no longer rate-limited.
+        # GIFs are not rate-limited.
         is_gif = message.animation is not None
 
         await store.save_message(
@@ -747,24 +738,18 @@ async def cmd_info(update, context):
         await admin_reply(update, bot, "Dă reply la un mesaj al persoanei cu /info, sau scrie id-ul ei după comandă.")
         return
     try:
-        membership = await bot.get_chat_member(GROUP_CHAT_ID, user_id)
-        tg_user, status = membership.user, membership.status
+        status = (await bot.get_chat_member(GROUP_CHAT_ID, user_id)).status
     except Exception:
-        tg_user, status = None, "necunoscut"
-    member = await store.get_member(GROUP_CHAT_ID, user_id)
+        status = "necunoscut"
     lines = [f"ℹ️ {name} · id {user_id}"]
     if await is_admin(bot, GROUP_CHAT_ID, user_id):
         lines.append("Admin: poate posta oricând.")
     elif await store.is_whitelisted(GROUP_CHAT_ID, user_id):
         lines.append("Pe lista albă: poate posta, nicio regulă nu i se aplică.")
-    elif member and member["unlocked"]:
-        lines.append("Poate posta.")
-    else:
-        lines.append("Nu poate posta încă.")
     lines.append(f"În grup: {status}")
-    lines.append(f"Invitații: {await store.invite_count(GROUP_CHAT_ID, user_id)}/{INVITES_REQUIRED}")
-    on_site = bool(tg_user) and await linked_on_site(tg_user)
-    lines.append(f"Telegram pe un profil approape.ro: {'da' if on_site else 'nu'}")
+    lines.append(f"A adus: {await store.invite_count(GROUP_CHAT_ID, user_id)}")
+    lines.append(f"Reclame în ultimele {AD_WINDOW_HOURS}h: "
+                 f"{await store.recent_ad_count(GROUP_CHAT_ID, user_id, AD_WINDOW_HOURS)}/{AD_LIMIT}")
     lines.append(f"Abateri în ultimele {VIOLATION_WINDOW_HOURS:g}h: {await store.violation_count(GROUP_CHAT_ID, user_id, VIOLATION_WINDOW_HOURS)}")
     await admin_reply(update, bot, "\n".join(lines))
 
@@ -787,7 +772,7 @@ async def cmd_unlock(update, context):
     await store.set_unlocked(GROUP_CHAT_ID, user_id)
     await allow_posting(bot, GROUP_CHAT_ID, user_id)
     await store.log_event(GROUP_CHAT_ID, user_id, "unlock", f"manual, de {update.effective_user.id}")
-    await admin_reply(update, bot, f"✅ {name} poate posta. Celelalte reguli i se aplică în continuare.")
+    await admin_reply(update, bot, f"✅ {name} poate posta din nou (mute ridicat). Regulile i se aplică în continuare.")
 
 
 async def cmd_stats(update, context):
@@ -795,7 +780,7 @@ async def cmd_stats(update, context):
         return
     s = await store.stats(GROUP_CHAT_ID)
     await update.effective_message.reply_text(
-        f"📊 Membri urmăriți: {s['members']}\nPot posta: {s['unlocked']}\n"
+        f"📊 Membri urmăriți: {s['members']}\n"
         f"Invitații: {s['invites']}\nAbateri (7 zile): {s['violations_7d']}"
     )
 
@@ -863,6 +848,8 @@ async def main():
     tg_app = build_application()
     await tg_app.initialize()
     await tg_app.start()
+    if GROUP_CHAT_ID:
+        spawn(lift_invite_locks(tg_app.bot))
     if WEBHOOK_URL:
         await tg_app.bot.set_webhook(
             url=f"{WEBHOOK_URL}/telegram/webhook",

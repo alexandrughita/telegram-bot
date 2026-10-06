@@ -732,6 +732,47 @@ async def admin_reply(update, bot, text):
         await send_temporary(bot, GROUP_CHAT_ID, text, NOTICE_TTL_SECONDS)
 
 
+EVENT_LABELS = {
+    "delete": "șters", "warn": "avertisment", "mute": "mute", "unlock": "deblocat",
+    "whitelist": "pus pe lista albă", "unwhitelist": "scos de pe lista albă",
+}
+NEXT_ACTION_LABELS = {"delete": "ștergere", "warn": "avertisment", "mute": f"mute {MUTE_MINUTES} min"}
+
+
+def local_when(at, now):
+    """'azi la 19:43', 'mâine la 09:10' or '08.10 la 19:43', in Bucharest time."""
+    at, today = at.astimezone(LOCAL_TZ), now.astimezone(LOCAL_TZ).date()
+    if at.date() == today:
+        day = "azi"
+    elif at.date() == today + timedelta(days=1):
+        day = "mâine"
+    else:
+        day = at.strftime("%d.%m")
+    return f"{day} la {at.strftime('%H:%M')}"
+
+
+async def posting_status(bot, user_id, member, ads, now):
+    """One line saying whether she can post right now, and if not why and until when."""
+    if await is_admin(bot, GROUP_CHAT_ID, user_id):
+        return "👑 Admin: poate posta oricând."
+    if await store.is_whitelisted(GROUP_CHAT_ID, user_id):
+        return "⭐ Pe lista albă: poate posta, nicio regulă nu i se aplică."
+    if member is None:
+        return "❔ Nu știu dacă e în grup."
+    if member.status == "left":
+        return "🚪 A ieșit din grup."
+    if member.status == "kicked":
+        return "🚫 Scoasă din grup (ban)."
+    if member.status == "restricted" and not getattr(member, "can_send_messages", True):
+        until = getattr(member, "until_date", None)
+        return f"🔇 Mute până {local_when(until, now)}." if until else "🔇 Nu poate scrie (restricționată fără termen)."
+    if ads >= AD_LIMIT:
+        oldest = await store.oldest_ad(GROUP_CHAT_ID, user_id, AD_WINDOW_HOURS)
+        when = local_when(oldest["created_at"] + timedelta(hours=AD_WINDOW_HOURS), now) if oldest else "în curând"
+        return f"⛔ Limita de reclame atinsă: mesaje normale da, reclame din nou {when}."
+    return "✅ Poate posta acum."
+
+
 async def cmd_info(update, context):
     message, bot = update.effective_message, context.bot
     if not await is_admin(bot, GROUP_CHAT_ID, update.effective_user.id):
@@ -740,20 +781,42 @@ async def cmd_info(update, context):
     if user_id is None:
         await admin_reply(update, bot, "Dă reply la un mesaj al persoanei cu /info, sau scrie id-ul ei după comandă.")
         return
+    now = datetime.now(timezone.utc)
     try:
-        status = (await bot.get_chat_member(GROUP_CHAT_ID, user_id)).status
+        member = await bot.get_chat_member(GROUP_CHAT_ID, user_id)
     except Exception:
-        status = "necunoscut"
-    lines = [f"ℹ️ {name} · id {user_id}"]
-    if await is_admin(bot, GROUP_CHAT_ID, user_id):
-        lines.append("Admin: poate posta oricând.")
-    elif await store.is_whitelisted(GROUP_CHAT_ID, user_id):
-        lines.append("Pe lista albă: poate posta, nicio regulă nu i se aplică.")
-    lines.append(f"În grup: {status}")
-    lines.append(f"A adus: {await store.invite_count(GROUP_CHAT_ID, user_id)}")
-    lines.append(f"Reclame în ultimele {AD_WINDOW_HOURS}h: "
-                 f"{await store.recent_ad_count(GROUP_CHAT_ID, user_id, AD_WINDOW_HOURS)}/{AD_LIMIT}")
-    lines.append(f"Abateri în ultimele {VIOLATION_WINDOW_HOURS:g}h: {await store.violation_count(GROUP_CHAT_ID, user_id, VIOLATION_WINDOW_HOURS)}")
+        member = None
+    known = await store.get_member(GROUP_CHAT_ID, user_id)
+    if name.startswith("id ") and known:
+        name = html.escape(known["first_name"] or "")
+    if known and known["username"]:
+        name += f" @{html.escape(known['username'])}"
+    ads = await store.recent_ad_count(GROUP_CHAT_ID, user_id, AD_WINDOW_HOURS)
+    static = await store.recent_sticker_count(GROUP_CHAT_ID, user_id, STICKER_WINDOW_HOURS, static=True)
+    animated = await store.recent_sticker_count(GROUP_CHAT_ID, user_id, STICKER_WINDOW_HOURS, static=False)
+    violations = await store.violation_count(GROUP_CHAT_ID, user_id, VIOLATION_WINDOW_HOURS)
+    next_action = NEXT_ACTION_LABELS[violation_action(violations + 1)]
+    invites = await store.invite_count(GROUP_CHAT_ID, user_id)
+
+    lines = [f"ℹ️ {name} · id {user_id}", await posting_status(bot, user_id, member, ads, now), ""]
+    lines.append(f"📣 Reclame ({AD_WINDOW_HOURS}h): {ads}/{AD_LIMIT}")
+    lines.append(f"🎨 Stickere ({STICKER_WINDOW_HOURS}h): statice {static}/{STICKERS_PER_DAY} · "
+                 f"animate {animated}/{STICKERS_PER_DAY}")
+    lines.append(f"⚠️ Abateri ({VIOLATION_WINDOW_HOURS:g}h): {violations} → următoarea: {next_action}")
+    joined = f" · în grup din {known['first_seen'].astimezone(LOCAL_TZ):%d.%m}" if known else ""
+    lines.append(f"👥 A adus: {invites}{joined}")
+    reminder = await store.get_time(f"ad_reminder:{GROUP_CHAT_ID}:{user_id}")
+    if reminder:
+        lines.append(f"🔔 Reminder „poți posta”: trimis {local_when(reminder, now)}")
+
+    events = await store.recent_events(GROUP_CHAT_ID, user_id, 5)
+    if events:
+        lines += ["", "Ultimele acțiuni:"]
+        for event in events:
+            label = EVENT_LABELS.get(event["event_type"], event["event_type"])
+            reason = (event["reason"] or "").split(";")[0]
+            lines.append(f"• {event['created_at'].astimezone(LOCAL_TZ):%d.%m %H:%M} {label}"
+                         + (f": {html.escape(reason)}" if reason else ""))
     await admin_reply(update, bot, "\n".join(lines))
 
 

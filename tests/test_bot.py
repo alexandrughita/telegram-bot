@@ -718,8 +718,35 @@ def test_info_shows_her_ads_and_invites(env, run):
     message(env, run, 90, AD, mid=2)
     group_command(env, run, ADMIN_ID, "/info", reply_to_uid=90, handler=bot.cmd_info)
     text = last_text(env)
-    for part in ("În grup: member", "A adus: 0", "Reclame în ultimele 24h: 2/2"):
+    for part in ("A adus: 0", "Reclame (24h): 2/2", "Stickere (24h): statice 0/2 · animate 0/2",
+                 "Abateri (48h): 0 → următoarea: ștergere"):
         assert part in text, part
+
+
+def test_info_says_she_can_post(env, run):
+    posting_member(env, run, 91)
+    group_command(env, run, ADMIN_ID, "/info", reply_to_uid=91, handler=bot.cmd_info)
+    assert "✅ Poate posta acum." in last_text(env)
+
+
+def test_info_says_when_ads_are_allowed_again_and_lists_the_block(env, run):
+    posting_member(env, run, 92)
+    for mid in (1, 2, 3):
+        message(env, run, 92, AD, mid=mid)
+    group_command(env, run, ADMIN_ID, "/info", reply_to_uid=92, handler=bot.cmd_info)
+    text = last_text(env)
+    assert "⛔ Limita de reclame atinsă: mesaje normale da, reclame din nou" in text
+    assert "Ultimele acțiuni:" in text and "șters: reclame: limita 2/24h" in text
+
+
+def test_info_shows_a_mute_with_its_end(env, run):
+    posting_member(env, run, 93)
+    until = datetime.now(timezone.utc) + timedelta(minutes=30)
+    env.bot.get_chat_member = AsyncMock(return_value=SimpleNamespace(
+        status="restricted", can_send_messages=False, until_date=until,
+        user=SimpleNamespace(id=93, username=None, first_name="U93", is_bot=False)))
+    group_command(env, run, ADMIN_ID, "/info", reply_to_uid=93, handler=bot.cmd_info)
+    assert f"🔇 Mute până {bot.local_when(until, datetime.now(timezone.utc))}." in last_text(env)
 
 
 def test_info_and_unlock_are_admin_only(env, run):

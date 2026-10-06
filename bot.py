@@ -11,6 +11,7 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from telegram import ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, Update
+from telegram.error import Forbidden
 from telegram.ext import (
     Application, CallbackQueryHandler, ChatMemberHandler, CommandHandler,
     ContextTypes, MessageHandler, filters,
@@ -647,11 +648,18 @@ async def run_ad_reminders(bot):
         if last_reminder and (last_reminder >= last_limit
                               or now - last_reminder < timedelta(days=AD_REMINDER_EVERY_DAYS)):
             continue
+        refused = await store.get_time(f"ad_reminder_refused:{GROUP_CHAT_ID}:{user_id}")
+        if refused and refused >= last_limit:
+            continue  # Telegram refused this block's reminder; no retry until the next block
         if await store.recent_ad_count(GROUP_CHAT_ID, user_id, AD_WINDOW_HOURS) >= AD_LIMIT:
             continue  # still blocked
         try:
             await send_ad_reminder(bot, user_id)
             await store.set_time(f"ad_reminder:{GROUP_CHAT_ID}:{user_id}", now)
+        except Forbidden:
+            # She never opened the bot privately (or blocked it): bots cannot start a chat.
+            await store.set_time(f"ad_reminder_refused:{GROUP_CHAT_ID}:{user_id}", now)
+            await store.log_event(GROUP_CHAT_ID, user_id, "reminder_refused", "nu a deschis botul în privat")
         except Exception as exc:
             log.info("Could not send ad reminder to %s: %s", user_id, exc)
 

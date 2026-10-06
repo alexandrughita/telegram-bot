@@ -791,3 +791,26 @@ def test_ad_reminder_at_most_once_a_week(env, run):
     run(env.store.set_time(f"ad_reminder:{G}:52", now - timedelta(days=7.1)))
     run(bot.run_ad_reminders(env.bot))
     assert reminders_sent(env, 52) == 1
+
+
+def test_ad_reminder_refused_by_telegram_is_not_retried(env, run):
+    from telegram.error import Forbidden
+    env.bot.send_message = AsyncMock(side_effect=Forbidden("bot can't initiate conversation with a user"))
+    hit_ad_limit(env, run, 53, hours_ago=30, ads_still_in_window=0)
+    for _ in range(3):
+        run(bot.run_ad_reminders(env.bot))
+    assert env.bot.send_message.await_count == 1
+
+    # Blocked again later: she may have opened the bot since, so it tries once more.
+    run(env.store.set_time(f"ad_limit:{G}:53", datetime.now(timezone.utc)))
+    run(bot.run_ad_reminders(env.bot))
+    assert env.bot.send_message.await_count == 2
+
+
+def test_ad_reminder_network_error_is_retried(env, run):
+    env.bot.send_message = AsyncMock(side_effect=[RuntimeError("timeout"), SimpleNamespace(message_id=1)])
+    hit_ad_limit(env, run, 54, hours_ago=30, ads_still_in_window=0)
+    run(bot.run_ad_reminders(env.bot))
+    run(bot.run_ad_reminders(env.bot))
+    assert env.bot.send_message.await_count == 2
+    assert run(env.store.get_time(f"ad_reminder:{G}:54")) is not None

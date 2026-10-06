@@ -761,8 +761,8 @@ async def cmd_verify(update, context):
         if update.effective_chat.type != "private":
             try:
                 await bot.delete_message(update.effective_chat.id, message.message_id)
-            except Exception:
-                pass
+            except Exception as exc:
+                log.warning("Admin command not deleted from the group: %s", exc)
         await bot.send_message(GROUP_CHAT_ID, f"🎥 {name} a fost verificată.", parse_mode="HTML")
         if update.effective_chat.type == "private":
             await message.reply_text(f"Gata, {name} poate posta {VERIFIED_AD_LIMIT} reclame pe zi.", parse_mode="HTML")
@@ -784,8 +784,8 @@ async def admin_reply(update, bot, text):
         return
     try:
         await bot.delete_message(update.effective_chat.id, update.effective_message.message_id)
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning("Admin command not deleted from the group: %s", exc)
     try:
         await bot.send_message(update.effective_user.id, text, parse_mode="HTML")
     except Exception as exc:

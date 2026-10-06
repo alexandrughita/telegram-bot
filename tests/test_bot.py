@@ -253,7 +253,7 @@ def test_the_same_text_is_allowed_twice_a_day_counting_the_first(env, run):
     message(env, run, 90, AD, mid=3)
     env.bot.delete_message.assert_awaited_once_with(G, 3)
     assert "limita de 2 reclame" in last_text(env)
-    assert "Poți posta din nou după" in last_text(env)
+    assert "Poți posta din nou" in last_text(env)
     assert run(env.store._one("SELECT COUNT(*) AS n FROM violations"))["n"] == 0
 
 
@@ -904,3 +904,14 @@ def test_ad_reminder_network_error_is_retried(env, run):
     run(bot.run_ad_reminders(env.bot))
     assert env.bot.send_message.await_count == 2
     assert run(env.store.get_time(f"ad_reminder:{G}:54")) is not None
+
+
+def test_retry_time_is_said_in_words():
+    tz = bot.LOCAL_TZ
+    now = datetime(2026, 10, 6, 14, 0, tzinfo=tz)
+    assert bot.friendly_when(datetime(2026, 10, 6, 19, 43, tzinfo=tz), now) == "diseară după 19:43"
+    assert bot.friendly_when(datetime(2026, 10, 6, 15, 5, tzinfo=tz), now) == "azi după 15:05"
+    assert bot.friendly_when(datetime(2026, 10, 7, 2, 30, tzinfo=tz), now) == "la noapte după 02:30"
+    assert bot.friendly_when(datetime(2026, 10, 7, 9, 10, tzinfo=tz), now) == "mâine dimineață după 09:10"
+    assert bot.friendly_when(datetime(2026, 10, 7, 13, 0, tzinfo=tz), now) == "mâine după 13:00"
+    assert bot.friendly_when(datetime(2026, 10, 7, 17, 0, tzinfo=tz), now) == "mâine seară după 17:00"

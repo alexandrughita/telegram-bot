@@ -444,7 +444,7 @@ async def handle_ad(bot, message):
         await send_temporary(
             bot, GROUP_CHAT_ID,
             f"⛔ {user.mention_html()}, ai atins limita de {limit} reclame pe zi. "
-            f"Poți posta din nou după {local_retry}.",
+            f"Poți posta din nou {friendly_when(retry, datetime.now(timezone.utc))}.",
             NOTICE_TTL_SECONDS,
         )
         return False
@@ -812,6 +812,22 @@ def local_when(at, now):
     else:
         day = at.strftime("%d.%m")
     return f"{day} la {at.strftime('%H:%M')}"
+
+
+def friendly_when(at, now):
+    """'diseară după 19:43', 'mâine dimineață după 09:10', in Bucharest time. The ad
+    window is 24h, so the moment is always today or tomorrow."""
+    at = at.astimezone(LOCAL_TZ)
+    today = at.date() == now.astimezone(LOCAL_TZ).date()
+    if at.hour < 5:
+        part = "la noapte"
+    elif at.hour < 12:
+        part = "azi dimineață" if today else "mâine dimineață"
+    elif at.hour >= 17:
+        part = "diseară" if today else "mâine seară"
+    else:
+        part = "azi" if today else "mâine"
+    return f"{part} după {at.strftime('%H:%M')}"
 
 
 async def posting_status(bot, user_id, member, ads, now):

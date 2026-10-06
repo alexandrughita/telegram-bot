@@ -743,3 +743,44 @@ def test_health_reports_the_live_commit(monkeypatch):
     monkeypatch.setenv("RENDER_GIT_COMMIT", "ab27b5d0123456789")
     assert TestClient(bot.app).get("/").json()["commit"] == "ab27b5d"
 
+
+
+def hit_ad_limit(env, run, uid, days_ago):
+    run(env.store.log_event(G, uid, "delete", "reclame: limita 2/24h"))
+    at = datetime.now(timezone.utc) - timedelta(days=days_ago)
+    run(env.store.set_time(f"ad_limit:{G}:{uid}", at))
+
+
+def reminders_sent(env, uid):
+    return sum(1 for c in env.bot.send_message.call_args_list if c.args[0] == uid)
+
+
+def test_ad_reminder_waits_three_days(env, run):
+    hit_ad_limit(env, run, 50, days_ago=2)
+    run(bot.run_ad_reminders(env.bot))
+    assert reminders_sent(env, 50) == 0
+
+    hit_ad_limit(env, run, 50, days_ago=3.1)
+    run(bot.run_ad_reminders(env.bot))
+    assert reminders_sent(env, 50) == 1
+
+
+def test_ad_reminder_is_sent_once_not_on_every_tick(env, run):
+    hit_ad_limit(env, run, 51, days_ago=4)
+    for _ in range(3):
+        run(bot.run_ad_reminders(env.bot))
+    assert reminders_sent(env, 51) == 1
+
+
+def test_ad_reminder_at_most_once_a_week(env, run):
+    now = datetime.now(timezone.utc)
+    # Reminded 5 days ago, hit the limit again since: still inside the week.
+    run(env.store.set_time(f"ad_reminder:{G}:52", now - timedelta(days=5)))
+    hit_ad_limit(env, run, 52, days_ago=4)
+    run(bot.run_ad_reminders(env.bot))
+    assert reminders_sent(env, 52) == 0
+
+    # A week after the last reminder, the new limit hit earns another one.
+    run(env.store.set_time(f"ad_reminder:{G}:52", now - timedelta(days=7.1)))
+    run(bot.run_ad_reminders(env.bot))
+    assert reminders_sent(env, 52) == 1

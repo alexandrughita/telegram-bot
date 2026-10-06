@@ -42,7 +42,8 @@ NOTICE_TTL_SECONDS = 60
 CACHE_TTL_SECONDS = 300
 AD_LIMIT = 2
 AD_WINDOW_HOURS = 24
-WEEKLY_AD_REMINDER_DAYS = 7
+AD_REMINDER_AFTER_DAYS = 3  # the limit itself resets after 24h
+AD_REMINDER_EVERY_DAYS = 7  # at most one reminder a week
 # Static and animated/video stickers are counted separately, 2 of each per day.
 STICKERS_PER_DAY = 2
 STICKER_WINDOW_HOURS = 24
@@ -634,12 +635,17 @@ async def post_question(bot, index):
 
 
 async def run_ad_reminders(bot):
-    rows = await store.ad_limit_users(GROUP_CHAT_ID, WEEKLY_AD_REMINDER_DAYS * 2)
+    rows = await store.ad_limit_users(GROUP_CHAT_ID, AD_REMINDER_AFTER_DAYS + AD_REMINDER_EVERY_DAYS)
     now = datetime.now(timezone.utc)
     for row in rows:
         user_id = row["user_id"]
         last_limit = await store.get_time(f"ad_limit:{GROUP_CHAT_ID}:{user_id}")
-        if not last_limit or now - last_limit < timedelta(days=WEEKLY_AD_REMINDER_DAYS):
+        if not last_limit or now - last_limit < timedelta(days=AD_REMINDER_AFTER_DAYS):
+            continue
+        last_reminder = await store.get_time(f"ad_reminder:{GROUP_CHAT_ID}:{user_id}")
+        # One reminder per time she hits the limit, and never two within a week.
+        if last_reminder and (last_reminder >= last_limit
+                              or now - last_reminder < timedelta(days=AD_REMINDER_EVERY_DAYS)):
             continue
         active = await store.recent_ad_count(GROUP_CHAT_ID, user_id, AD_WINDOW_HOURS)
         if active:

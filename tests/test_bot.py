@@ -66,7 +66,7 @@ def run():
 def env(run, monkeypatch):
     store = Store(DSN)
     run(store.open())
-    run(store._execute("TRUNCATE members, invite_links, invites, messages, violations, support_threads, moderation_events, bot_posts, bot_state, whitelist"))
+    run(store._execute("TRUNCATE members, invite_links, invites, messages, violations, support_threads, moderation_events, bot_posts, bot_state, whitelist, verified"))
     bot.store = store
     bot._admin_cache.clear()
     bot._permissions_cache.clear()
@@ -632,12 +632,20 @@ def group_command(env, run, uid, text, reply_to_uid=None, handler=None):
     run((handler or bot.cmd_whitelist)(upd, SimpleNamespace(bot=env.bot, args=text.split()[1:])))
 
 
+COMMAND_MID = 30  # group_command's message id; admin commands are deleted from the group
+
+
+def member_deletions(env):
+    """Messages the bot deleted, minus the admin commands it removes on purpose."""
+    return [c.args[1] for c in env.bot.delete_message.call_args_list if c.args[1] != COMMAND_MID]
+
+
 def test_whitelisted_member_skips_every_rule(env, run):
     group_command(env, run, ADMIN_ID, "/whitelist", reply_to_uid=90)
     assert env.bot.posting_unlocked(90)  # a lock or mute she had is lifted
     for mid in range(1, 5):  # repeated ad, phone number
         message(env, run, 90, "Același anunț, sună 0722123456", mid=mid)
-    env.bot.delete_message.assert_not_awaited()
+    assert member_deletions(env) == []
     assert events(env, run, 90) == ["whitelist"]
 
 
@@ -646,7 +654,7 @@ def test_unwhitelist_brings_the_rules_back(env, run):
     group_command(env, run, ADMIN_ID, "/unwhitelist", reply_to_uid=90)
     for mid in (1, 2, 3):
         message(env, run, 90, AD, mid=mid)
-    env.bot.delete_message.assert_awaited_once_with(G, 3)
+    assert member_deletions(env) == [3]
     assert events(env, run, 90)[:2] == ["whitelist", "unwhitelist"]
 
 
@@ -666,6 +674,61 @@ def test_whitelisted_private_status(env, run):
     group_command(env, run, ADMIN_ID, "/whitelist 96")
     run(bot.invite_status(private_command(env, run, 96, "/status"), env.ctx))
     assert "lista albă" in env.bot.send_message.call_args.kwargs["text"]
+
+
+# ---- verified: 4 ads a day ------------------------------------------------
+def test_verified_member_may_post_four_ads_a_day(env, run):
+    posting_member(env, run, 90)
+    group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
+    assert run(env.store.is_verified(G, 90))
+    for mid in range(1, 6):
+        message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
+    assert member_deletions(env) == [5]
+    assert "limita de 4 reclame" in last_text(env)
+    assert events(env, run, 90)[0] == "verify"
+
+
+def test_neverifica_brings_back_two_ads_a_day(env, run):
+    posting_member(env, run, 90)
+    group_command(env, run, ADMIN_ID, "/verifica 90", handler=bot.cmd_verify)
+    group_command(env, run, ADMIN_ID, "/neverifica", reply_to_uid=90, handler=bot.cmd_verify)
+    for mid in (1, 2, 3):
+        message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
+    assert member_deletions(env) == [3]
+
+
+def test_verifica_announces_her_in_the_group_for_good(env, run):
+    posting_member(env, run, 90)
+    group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
+    env.bot.delete_message.assert_any_await(G, COMMAND_MID)
+    announce = env.bot.send_message.call_args
+    assert announce.args[0] == G and "a fost verificată" in announce.args[1]
+    run(asyncio.sleep(0))
+    assert member_deletions(env) == []  # the announcement is never scheduled for deletion
+
+
+def test_admin_commands_in_the_group_are_answered_privately(env, run):
+    posting_member(env, run, 90)
+    group_command(env, run, ADMIN_ID, "/info", reply_to_uid=90, handler=bot.cmd_info)
+    env.bot.delete_message.assert_any_await(G, COMMAND_MID)
+    assert env.bot.send_message.call_args.args[0] == ADMIN_ID
+    assert all(c.args[0] != G for c in env.bot.send_message.call_args_list)
+
+
+def test_admin_answer_falls_back_to_the_group_when_she_never_opened_the_bot(env, run):
+    posting_member(env, run, 90)
+    async def send(chat_id, text, **kwargs):
+        if chat_id == ADMIN_ID:
+            raise bot.Forbidden("bot can't initiate conversation with a user")
+        return SimpleNamespace(message_id=500)
+    env.bot.send_message = AsyncMock(side_effect=send)
+    group_command(env, run, ADMIN_ID, "/info", reply_to_uid=90, handler=bot.cmd_info)
+    assert env.bot.send_message.call_args.args[0] == G
+
+
+def test_only_admins_can_verify(env, run):
+    group_command(env, run, 91, "/verifica", reply_to_uid=91, handler=bot.cmd_verify)
+    assert not run(env.store.is_verified(G, 91))
 
 
 # ---- /start menu --------------------------------------------------------
@@ -761,7 +824,7 @@ def test_unlock_lifts_a_mute_but_keeps_the_other_rules(env, run):
     assert env.bot.posting_unlocked(91)
     for mid in (1, 2, 3):
         message(env, run, 91, AD, mid=mid)
-    env.bot.delete_message.assert_awaited_once_with(G, 3)
+    assert member_deletions(env) == [3]
     assert events(env, run, 91) == ["unlock", "delete"]
 
 

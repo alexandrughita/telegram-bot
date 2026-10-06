@@ -34,7 +34,7 @@ QUESTIONS = [
     {"text": "Ce oraș credeți că lipsește de pe approape.ro? 👇"},
     {"text": "Pentru fete: ce v-a adus cele mai multe mesaje — pozele, descrierea sau verificarea profilului? 👇"},
     {"text": "Ce sfat ai pentru cineva care își face primul profil pe approape.ro? 👇"},
-    {"text": "Ce vă enervează cel mai tare când căutați un profil? Spuneți-ne, ca să reparăm. 👇"},
+    {"text": "Ce vă enervează cel mai tare când căutați o fată? Spuneți-ne, ca să reparăm. 👇"},
     {"text": "Ați găsit pe approape.ro ce căutați? Ce v-a lipsit? 👇"},
     {"poll": "Ce contează cel mai mult când alegi o fată?",
      "options": ["Poze reale / verificate", "Recenziile", "Răspunde repede", "Prețul"]},

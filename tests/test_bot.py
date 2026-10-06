@@ -253,6 +253,7 @@ def test_the_same_text_is_allowed_twice_a_day_counting_the_first(env, run):
     message(env, run, 90, AD, mid=3)
     env.bot.delete_message.assert_awaited_once_with(G, 3)
     assert "limita de 2 reclame" in last_text(env)
+    assert "Mesajele adevărate" in last_text(env)
     assert run(env.store._one("SELECT COUNT(*) AS n FROM violations"))["n"] == 0
 
 
@@ -274,6 +275,32 @@ def test_the_same_text_is_allowed_again_after_a_day(env, run):
     run(env.store._execute("UPDATE messages SET created_at = now() - interval '25 hours'"))
     message(env, run, 90, AD, mid=3)
     env.bot.delete_message.assert_not_awaited()
+
+
+def test_reworded_copies_are_the_same_ad(env, run):
+    # Real variants one member posted on 2026-10-05; only exact copies counted then.
+    posting_member(env, run, 90)
+    message(env, run, 90, "Doamne/domnișoare nesatisfăcute, aștept mesaj în privat", mid=1)
+    message(env, run, 90, "Doamne/domnișoare nesatisfăcute din Brașov, pm me", mid=2)
+    run(env.store._execute("UPDATE messages SET created_at = now() - interval '10 hours'"))
+    message(env, run, 90, "Doamne/domnișoare nesatisfăcute pm me", mid=3)
+    env.bot.delete_message.assert_awaited_once_with(G, 3)
+    assert "limita de 2 reclame" in last_text(env)
+    assert run(env.store._one("SELECT COUNT(*) AS n FROM violations"))["n"] == 0
+
+
+def test_a_font_swap_is_the_same_text(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "𝐃𝐢𝐬𝐩𝐨𝐧𝐢𝐛𝐢𝐥𝐚 𝐩𝐞𝐧𝐭𝐫𝐮 videocall și sexting", mid=1)
+    message(env, run, 90, "Disponibila pentru videocall și sexting", mid=2)
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 2
+
+
+def test_different_messages_from_one_member_are_not_ads(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Bună dimineața tuturor, ce mai faceți azi?", mid=1)
+    message(env, run, 90, "Știe cineva un restaurant bun în Cluj pentru diseară?", mid=2)
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 0
 
 
 def test_short_or_emoji_repeats_are_not_ads(env, run):

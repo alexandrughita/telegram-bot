@@ -19,7 +19,7 @@ from telegram.ext import (
 from db import Store
 from moderation import (
     MIN_TEXT_LENGTH_EXACT, build_fingerprint, duplicate_reason, has_external_link, links_to_approape,
-    violation_action,
+    same_ad_text, violation_action,
 )
 import posts
 
@@ -33,7 +33,6 @@ SUPPORT_CHAT_ID = int(os.environ.get("SUPPORT_CHAT_ID") or 0)
 GROUP_INVITE_URL = os.environ.get("GROUP_INVITE_URL", "").strip()
 
 DUPLICATE_COOLDOWN_HOURS = float(os.environ.get("DUPLICATE_COOLDOWN_HOURS", "6"))
-SIMILARITY_THRESHOLD = float(os.environ.get("SIMILARITY_THRESHOLD", "0.92"))
 VIOLATION_WINDOW_HOURS = float(os.environ.get("VIOLATION_WINDOW_HOURS", "48"))
 MUTE_MINUTES = int(os.environ.get("MUTE_MINUTES", "60"))
 PORT = int(os.environ.get("PORT", "10000"))
@@ -47,6 +46,9 @@ WEEKLY_AD_REMINDER_DAYS = 7
 # Static and animated/video stickers are counted separately, 2 of each per day.
 STICKERS_PER_DAY = 2
 STICKER_WINDOW_HOURS = 24
+# Ends every note that deletes an ad or a sticker over the limit.
+REAL_MESSAGES_NOTE = ("Mai bine scrie-ne ceva: o întrebare, o recomandare sau o experiență de povestit. "
+                      "Mesajele adevărate țin grupul viu și aduc răspunsuri 🙂")
 
 logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -435,7 +437,7 @@ async def handle_ad(bot, message):
         await send_temporary(
             bot, GROUP_CHAT_ID,
             f"⛔ {user.mention_html()}, ai atins limita de {AD_LIMIT} reclame în ultimele 24 de ore.\n"
-            f"Poți posta din nou după {local_retry}.",
+            f"Poți posta din nou după {local_retry}.\n\n{REAL_MESSAGES_NOTE}",
             NOTICE_TTL_SECONDS,
         )
         return False
@@ -516,18 +518,20 @@ async def on_group_message(update, context):
             await send_temporary(
                 bot, GROUP_CHAT_ID,
                 f"{user.mention_html()}, poți trimite cel mult {STICKERS_PER_DAY} reclame pe zi. "
-                f"Mai bine scrie-ne ceva: o întrebare, o recomandare sau o experiență de povestit. "
-                f"Mesajele adevărate țin grupul viu și aduc răspunsuri 🙂",
+                f"{REAL_MESSAGES_NOTE}",
                 NOTICE_TTL_SECONDS)
             return
 
-        # Exact repeated text with 15+ normalized characters is an ad. Every copy in the
-        # last 24h counts, the first one included, so 2 ads/24h means 2 copies.
-        # A forward also repeats whatever anyone else posted: that counts as her ad too.
-        exact_text_ad = len(fp.text) >= MIN_TEXT_LENGTH_EXACT and (
-            await store.mark_repeated_text_as_ad(GROUP_CHAT_ID, user.id, fp.text, AD_WINDOW_HOURS)
-            or (message.forward_origin is not None and await store.text_posted_by_others(
-                GROUP_CHAT_ID, user.id, fp.text, AD_WINDOW_HOURS)))
+        # Repeated text is an ad: the same text (15+ normalized characters) or a reworded
+        # copy of it (same_ad_text). Every copy in the last 24h counts, the first one
+        # included, so 2 ads/24h means 2 copies. A forward also repeats whatever anyone
+        # else posted: that counts as her ad too.
+        repeats = [r["id"] for r in await store.recent_texts(GROUP_CHAT_ID, user.id, AD_WINDOW_HOURS)
+                   if same_ad_text(fp.text, r["text"])]
+        await store.mark_ads(repeats)
+        text_ad = bool(repeats) or (
+            message.forward_origin is not None and len(fp.text) >= MIN_TEXT_LENGTH_EXACT
+            and await store.text_posted_by_others(GROUP_CHAT_ID, user.id, fp.text, AD_WINDOW_HOURS))
 
         earlier = await store.recent_fingerprints(
             GROUP_CHAT_ID,
@@ -535,25 +539,16 @@ async def on_group_message(update, context):
             DUPLICATE_COOLDOWN_HOURS,
         )
 
-        is_ad = external_link_ad or exact_text_ad
+        is_ad = external_link_ad or text_ad
 
         if is_ad and not await handle_ad(bot, message):
             return
 
-        # Other duplicate fingerprints remain moderated normally.
-        # Exact text >=15 was already handled as an advertisement above,
-        # so don't punish it a second time.
-        reason = duplicate_reason(
-            fp,
-            earlier,
-            SIMILARITY_THRESHOLD,
-        )
-        if reason and not exact_text_ad:
-            await punish(
-                bot,
-                message,
-                f"reclamă repetată: {reason}",
-            )
+        # A repeated photo, link or number is a violation, unless the text already made it
+        # an ad: that is handled by the ad limit, not punished twice.
+        reason = duplicate_reason(fp, earlier)
+        if reason and not text_ad:
+            await punish(bot, message, f"reclamă repetată: {reason}")
             return
 
         # GIFs are not rate-limited.

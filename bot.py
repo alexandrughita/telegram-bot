@@ -42,7 +42,7 @@ NOTICE_TTL_SECONDS = 60
 CACHE_TTL_SECONDS = 300
 AD_LIMIT = 2
 AD_WINDOW_HOURS = 24
-WEEKLY_AD_REMINDER_DAYS = 7
+AD_REMINDER_EVERY_DAYS = 7  # at most one reminder a week
 # Static and animated/video stickers are counted separately, 2 of each per day.
 STICKERS_PER_DAY = 2
 STICKER_WINDOW_HOURS = 24
@@ -634,16 +634,21 @@ async def post_question(bot, index):
 
 
 async def run_ad_reminders(bot):
-    rows = await store.ad_limit_users(GROUP_CHAT_ID, WEEKLY_AD_REMINDER_DAYS * 2)
+    """Tell her she can post again once the ad limit that blocked her lifts."""
+    rows = await store.ad_limit_users(GROUP_CHAT_ID, AD_REMINDER_EVERY_DAYS + 1)
     now = datetime.now(timezone.utc)
     for row in rows:
         user_id = row["user_id"]
         last_limit = await store.get_time(f"ad_limit:{GROUP_CHAT_ID}:{user_id}")
-        if not last_limit or now - last_limit < timedelta(days=WEEKLY_AD_REMINDER_DAYS):
+        if not last_limit:
             continue
-        active = await store.recent_ad_count(GROUP_CHAT_ID, user_id, AD_WINDOW_HOURS)
-        if active:
+        last_reminder = await store.get_time(f"ad_reminder:{GROUP_CHAT_ID}:{user_id}")
+        # One reminder per block, and none if she already had one this week.
+        if last_reminder and (last_reminder >= last_limit
+                              or now - last_reminder < timedelta(days=AD_REMINDER_EVERY_DAYS)):
             continue
+        if await store.recent_ad_count(GROUP_CHAT_ID, user_id, AD_WINDOW_HOURS) >= AD_LIMIT:
+            continue  # still blocked
         try:
             await send_ad_reminder(bot, user_id)
             await store.set_time(f"ad_reminder:{GROUP_CHAT_ID}:{user_id}", now)

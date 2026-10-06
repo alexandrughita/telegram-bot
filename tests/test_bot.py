@@ -743,3 +743,51 @@ def test_health_reports_the_live_commit(monkeypatch):
     monkeypatch.setenv("RENDER_GIT_COMMIT", "ab27b5d0123456789")
     assert TestClient(bot.app).get("/").json()["commit"] == "ab27b5d"
 
+
+
+
+def hit_ad_limit(env, run, uid, hours_ago, ads_still_in_window):
+    """She was blocked hours_ago; ads_still_in_window of her ads are under 24h old."""
+    now = datetime.now(timezone.utc)
+    run(env.store.log_event(G, uid, "delete", "reclame: limita 2/24h"))
+    run(env.store.set_time(f"ad_limit:{G}:{uid}", now - timedelta(hours=hours_ago)))
+    run(env.store._execute("DELETE FROM messages WHERE user_id=%s", (uid,)))
+    for n in range(ads_still_in_window):
+        run(env.store._execute(
+            "INSERT INTO messages(chat_id,user_id,message_id,text,urls,phones,media,is_ad) "
+            "VALUES(%s,%s,%s,'ad','{}','{}','{}',true)", (G, uid, 900 + n)))
+
+
+def reminders_sent(env, uid):
+    return sum(1 for c in env.bot.send_message.call_args_list if c.args[0] == uid)
+
+
+def test_ad_reminder_waits_until_the_limit_lifts(env, run):
+    hit_ad_limit(env, run, 50, hours_ago=1, ads_still_in_window=2)
+    run(bot.run_ad_reminders(env.bot))
+    assert reminders_sent(env, 50) == 0
+
+    hit_ad_limit(env, run, 50, hours_ago=20, ads_still_in_window=1)
+    run(bot.run_ad_reminders(env.bot))
+    assert reminders_sent(env, 50) == 1
+
+
+def test_ad_reminder_is_sent_once_not_on_every_tick(env, run):
+    hit_ad_limit(env, run, 51, hours_ago=30, ads_still_in_window=0)
+    for _ in range(3):
+        run(bot.run_ad_reminders(env.bot))
+    assert reminders_sent(env, 51) == 1
+
+
+def test_ad_reminder_at_most_once_a_week(env, run):
+    now = datetime.now(timezone.utc)
+    # Reminded 3 days ago, blocked again since and the limit has lifted: same week, no reminder.
+    run(env.store.set_time(f"ad_reminder:{G}:52", now - timedelta(days=3)))
+    hit_ad_limit(env, run, 52, hours_ago=30, ads_still_in_window=0)
+    run(bot.run_ad_reminders(env.bot))
+    assert reminders_sent(env, 52) == 0
+
+    # A week after the last reminder, a new block earns another one.
+    run(env.store.set_time(f"ad_reminder:{G}:52", now - timedelta(days=7.1)))
+    run(bot.run_ad_reminders(env.bot))
+    assert reminders_sent(env, 52) == 1

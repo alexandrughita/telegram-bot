@@ -1,11 +1,15 @@
 """Pure moderation logic."""
 import re
 import difflib
+import unicodedata
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 MIN_TEXT_LENGTH_EXACT = 15
-MIN_TEXT_LENGTH_SIMILAR = 40
+MIN_TEXT_LENGTH_SIMILAR = 25
+# Reworded copies of the same ad score 0.79-0.91 on real group messages; different
+# members' texts never came above 0.6.
+AD_SIMILARITY = 0.75
 URL_RE = re.compile(r"(?:https?://|www\.)[^\s<>\"']+|\b(?:t\.me|telegram\.me|wa\.me)/[^\s<>\"']+",re.I)
 PHONE_CANDIDATE_RE = re.compile(r"(?:\+|00)?\d[\d\s.\-()]{7,16}\d")
 RO_MOBILE_RE = re.compile(r"^(?:0040|40)?0?(7\d{8})$")
@@ -19,7 +23,8 @@ class Fingerprint:
     def is_empty(self): return not (self.text or self.urls or self.phones or self.media)
 
 def normalize_text(text):
-    text=(text or "").lower()
+    # NFKC folds "fancy font" letters (𝐃𝐢𝐬𝐩𝐨𝐧𝐢𝐛𝐢𝐥𝐚) back to plain ones, so a font swap is still the same text.
+    text=unicodedata.normalize("NFKC",text or "").lower()
     text=URL_RE.sub(" ",text)
     text=re.sub(r"[@#]\w+"," ",text)
     text=re.sub(r"[^\w\s]","",text,flags=re.UNICODE)
@@ -55,15 +60,19 @@ def extract_phones(text,entity_phones=()):
 def build_fingerprint(text,entity_urls=(),entity_phones=(),media=()):
     return Fingerprint(normalize_text(text),extract_urls(text,entity_urls),extract_phones(text,entity_phones),{m for m in media if m})
 
-def duplicate_reason(new,earlier,similarity_threshold):
+def same_ad_text(new,old):
+    """Repeated text, on normalized strings: the same text, or a reworded copy of it."""
+    if len(new)>=MIN_TEXT_LENGTH_EXACT and new==old: return True
+    return (len(new)>=MIN_TEXT_LENGTH_SIMILAR and len(old)>=MIN_TEXT_LENGTH_SIMILAR
+            and difflib.SequenceMatcher(None,new,old).ratio()>=AD_SIMILARITY)
+
+def duplicate_reason(new,earlier):
+    """Repeated media, link or phone. Repeated text is an ad instead (same_ad_text)."""
     if new.is_empty(): return None
     for old in earlier:
         if new.media & old.media: return "aceeași poză sau același clip"
         if new.urls & old.urls: return "același link"
         if new.phones & old.phones: return "același număr de telefon"
-        if len(new.text)>=MIN_TEXT_LENGTH_EXACT and new.text==old.text: return "același text"
-        if len(new.text)>=MIN_TEXT_LENGTH_SIMILAR and len(old.text)>=MIN_TEXT_LENGTH_SIMILAR:
-            if difflib.SequenceMatcher(None,new.text,old.text).ratio()>=similarity_threshold: return "text aproape identic"
     return None
 
 def violation_action(count_in_window):

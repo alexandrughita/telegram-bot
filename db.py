@@ -126,12 +126,15 @@ class Store:
         r=await self._one(f"""SELECT COUNT(*) AS n FROM messages WHERE chat_id=%s AND user_id=%s AND {condition}
             AND created_at >= now() - %s * interval '1 hour'""",(chat_id,user_id,hours))
         return r["n"]
-    async def mark_repeated_text_as_ad(self,chat_id,user_id,text,hours):
-        """Marks her earlier copies of this text in the window as ads, so the first copy
-        counts toward the limit too. True if there was an earlier copy."""
-        cur=await self._execute("""UPDATE messages SET is_ad=TRUE WHERE chat_id=%s AND user_id=%s AND text=%s
-            AND created_at >= now() - %s * interval '1 hour'""",(chat_id,user_id,text,hours))
-        return cur.rowcount>0
+    async def recent_texts(self,chat_id,user_id,hours):
+        return await self._all("""SELECT id,text FROM messages WHERE chat_id=%s AND user_id=%s AND text<>''
+            AND created_at >= now() - %s * interval '1 hour'""",(chat_id,user_id,hours))
+    async def mark_ads(self,ids):
+        if ids: await self._execute("UPDATE messages SET is_ad=TRUE WHERE id = ANY(%s)",(list(ids),))
+    async def text_posted_by_others(self,chat_id,user_id,text,hours):
+        r=await self._one("""SELECT 1 AS x FROM messages WHERE chat_id=%s AND user_id<>%s AND text=%s
+            AND created_at >= now() - %s * interval '1 hour' LIMIT 1""",(chat_id,user_id,text,hours))
+        return r is not None
     async def locked_members(self,chat_id):
         return await self._all("SELECT user_id FROM members WHERE chat_id=%s AND NOT unlocked",(chat_id,))
     async def recent_ad_count(self,chat_id,user_id,hours):

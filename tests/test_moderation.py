@@ -1,6 +1,6 @@
 from moderation import (
     Fingerprint, build_fingerprint, duplicate_reason, extract_phones, extract_urls,
-    normalize_url, violation_action,
+    normalize_text, normalize_url, same_ad_text, violation_action,
 )
 
 
@@ -26,27 +26,37 @@ def test_prices_and_dates_are_not_phones():
 def test_shared_phone_is_the_same_ad_even_with_new_wording():
     old = build_fingerprint("Masaj relaxant în centru, sună 0722123456")
     new = build_fingerprint("Program nou azi! 0722 123 456")
-    assert duplicate_reason(new, [old], 0.92) == "același număr de telefon"
+    assert duplicate_reason(new, [old]) == "același număr de telefon"
 
 
 def test_same_photo_is_a_duplicate():
-    assert duplicate_reason(Fingerprint(media={"p1"}), [Fingerprint(media={"p1"})], 0.92)
+    assert duplicate_reason(Fingerprint(media={"p1"}), [Fingerprint(media={"p1"})])
 
 
-def test_short_chat_repeats_are_allowed():
-    assert duplicate_reason(build_fingerprint("mersi"), [build_fingerprint("mersi")], 0.92) is None
+def test_short_chat_repeats_are_not_ad_text():
+    assert not same_ad_text(normalize_text("mersi"), normalize_text("mersi"))
 
 
-def test_near_identical_long_text_is_a_duplicate():
-    a = build_fingerprint("Bună, sunt nouă în oraș și aștept mesajele voastre toată ziua")
-    b = build_fingerprint("Buna, sunt noua in oras si astept mesajele voastre toata ziua!")
-    assert duplicate_reason(b, [a], 0.85)
+def test_reworded_ad_is_the_same_ad():
+    # Real messages from the group, one member, 2026-10-05.
+    a = normalize_text("Doamne/domnișoare nesatisfăcute din Brașov, pm me")
+    b = normalize_text("Doamne/domnișoare nesatisfăcute pm me")
+    assert same_ad_text(b, a)
 
 
-def test_unrelated_messages_pass():
-    a = build_fingerprint("Bună dimineața tuturor, ce mai faceți azi?")
-    b = build_fingerprint("Știe cineva un restaurant bun în Cluj pentru diseară?")
-    assert duplicate_reason(b, [a], 0.92) is None
+def test_fancy_font_is_the_same_text():
+    assert normalize_text("𝐃𝐢𝐬𝐩𝐨𝐧𝐢𝐛𝐢𝐥𝐚 𝐩𝐞𝐧𝐭𝐫𝐮 show web") == normalize_text("Disponibila pentru show web")
+
+
+def test_unrelated_messages_are_not_the_same_ad():
+    a = normalize_text("Bună dimineața tuturor, ce mai faceți azi?")
+    b = normalize_text("Știe cineva un restaurant bun în Cluj pentru diseară?")
+    assert not same_ad_text(b, a)
+
+
+def test_text_alone_is_not_a_duplicate_violation():
+    assert duplicate_reason(build_fingerprint("Același anunț lung, încă o dată"),
+                            [build_fingerprint("Același anunț lung, încă o dată")]) is None
 
 
 def test_escalation_ladder():

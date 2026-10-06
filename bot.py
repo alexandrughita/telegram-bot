@@ -443,8 +443,8 @@ async def handle_ad(bot, message):
         await store.set_time(f"ad_limit:{GROUP_CHAT_ID}:{user.id}", datetime.now(timezone.utc))
         await send_temporary(
             bot, GROUP_CHAT_ID,
-            f"⛔ {user.mention_html()}, ai atins limita de {limit} reclame în ultimele 24 de ore.\n"
-            f"Poți posta din nou după {local_retry}.\n\n{REAL_MESSAGES_NOTE}",
+            f"⛔ {user.mention_html()}, ai atins limita de {limit} reclame pe zi. "
+            f"Poți posta din nou după {local_retry}.",
             NOTICE_TTL_SECONDS,
         )
         return False

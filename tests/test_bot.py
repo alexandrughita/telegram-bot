@@ -253,7 +253,7 @@ def test_the_same_text_is_allowed_twice_a_day_counting_the_first(env, run):
     message(env, run, 90, AD, mid=3)
     env.bot.delete_message.assert_awaited_once_with(G, 3)
     assert "limita de 2 reclame" in last_text(env)
-    assert "Mesajele adevărate" in last_text(env)
+    assert "Poți posta din nou după" in last_text(env)
     assert run(env.store._one("SELECT COUNT(*) AS n FROM violations"))["n"] == 0
 
 

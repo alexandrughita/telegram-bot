@@ -735,6 +735,7 @@ async def admin_reply(update, bot, text):
 EVENT_LABELS = {
     "delete": "șters", "warn": "avertisment", "mute": "mute", "unlock": "deblocat",
     "whitelist": "pus pe lista albă", "unwhitelist": "scos de pe lista albă",
+    "reminder_refused": "reminder netrimis",
 }
 NEXT_ACTION_LABELS = {"delete": "ștergere", "warn": "avertisment", "mute": f"mute {MUTE_MINUTES} min"}
 

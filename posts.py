@@ -36,7 +36,7 @@ QUESTIONS = [
     {"text": "Ce sfat ai pentru cineva care își face primul profil pe approape.ro? 👇"},
     {"text": "Ce vă enervează cel mai tare când căutați un profil? Spuneți-ne, ca să reparăm. 👇"},
     {"text": "Ați găsit pe approape.ro ce căutați? Ce v-a lipsit? 👇"},
-    {"poll": "Ce contează cel mai mult când alegi un profil?",
+    {"poll": "Ce contează cel mai mult când alegi o fată?",
      "options": ["Poze reale / verificate", "Recenziile", "Răspunde repede", "Prețul"]},
     {"poll": "Din ce zonă ești?",
      "options": ["București", "Ardeal", "Moldova", "Banat / Crișana", "Dobrogea", "Oltenia / Muntenia"]},

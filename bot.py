@@ -523,8 +523,11 @@ async def on_group_message(update, context):
 
         # Exact repeated text with 15+ normalized characters is an ad. Every copy in the
         # last 24h counts, the first one included, so 2 ads/24h means 2 copies.
-        exact_text_ad = len(fp.text) >= MIN_TEXT_LENGTH_EXACT and await store.mark_repeated_text_as_ad(
-            GROUP_CHAT_ID, user.id, fp.text, AD_WINDOW_HOURS)
+        # A forward also repeats whatever anyone else posted: that counts as her ad too.
+        exact_text_ad = len(fp.text) >= MIN_TEXT_LENGTH_EXACT and (
+            await store.mark_repeated_text_as_ad(GROUP_CHAT_ID, user.id, fp.text, AD_WINDOW_HOURS)
+            or (message.forward_origin is not None and await store.text_posted_by_others(
+                GROUP_CHAT_ID, user.id, fp.text, AD_WINDOW_HOURS)))
 
         earlier = await store.recent_fingerprints(
             GROUP_CHAT_ID,

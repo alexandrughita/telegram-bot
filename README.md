@@ -24,7 +24,9 @@ bot's private chat.
   behind text) is exempt from every rule below.
 - **Ads: at most 2 per 24 hours.** An ad is a message with a link outside approape.ro, or
   the same text (≥ 15 characters after normalising) posted again within 24 hours — every
-  copy counts, the first one included, so the same text can appear twice a day. The third
+  copy counts, the first one included, so the same text can appear twice a day. A
+  **forward** whose text (≥ 15 characters) anyone in the group posted in the last 24 hours
+  is an ad for whoever forwarded it; forwarded stickers follow the sticker limit. The third
   is deleted with a note saying when she can post again; it is not a violation. A week
   after she hit the limit she gets a private reminder that she can post again.
 - Other repeats within 6 hours are violations: the same photo/clip, the same link

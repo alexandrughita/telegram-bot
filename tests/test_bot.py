@@ -382,6 +382,75 @@ def test_stickers_arriving_together_are_still_limited(env, run):
     assert env.bot.delete_message.await_count == 2
 
 
+def forwarded(uid, mid, text=None, **extra):
+    """A message she forwarded from someone else (here: a channel)."""
+    msg = {"message_id": mid, "date": 0, "from": user(uid), "chat": {"id": G, "type": "supergroup"},
+           "forward_origin": {"type": "channel", "date": 0, "message_id": 7,
+                              "chat": {"id": -1009, "type": "channel", "title": "c"}}, **extra}
+    if text is not None:
+        msg["text"] = text
+    return Update.de_json({"update_id": mid, "message": msg}, None)
+
+
+def test_forwarding_text_someone_else_posted_is_an_ad(env, run):
+    posting_member(env, run, 90)
+    posting_member(env, run, 91)
+    message(env, run, 90, AD, mid=1)
+    run(bot.on_group_message(forwarded(91, 2, AD), env.ctx))
+    assert run(env.store.recent_ad_count(G, 91, 24)) == 1
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 0  # the original is not her ad
+    env.bot.delete_message.assert_not_awaited()
+
+
+def test_forwarded_repeats_hit_the_ad_limit(env, run):
+    posting_member(env, run, 90)
+    posting_member(env, run, 91)
+    message(env, run, 90, AD, mid=1)
+    message(env, run, 90, "Alt anunt la fel de lung ca primul", mid=2)
+    message(env, run, 90, "Al treilea anunt, tot destul de lung", mid=3)
+    run(bot.on_group_message(forwarded(91, 4, AD), env.ctx))
+    run(bot.on_group_message(forwarded(91, 5, "Alt anunt la fel de lung ca primul"), env.ctx))
+    run(bot.on_group_message(forwarded(91, 6, "Al treilea anunt, tot destul de lung"), env.ctx))
+    env.bot.delete_message.assert_awaited_once_with(G, 6)
+    assert "limita de 2 reclame" in last_text(env)
+
+
+def test_forwarding_text_seen_more_than_a_day_ago_is_not_an_ad(env, run):
+    posting_member(env, run, 90)
+    posting_member(env, run, 91)
+    message(env, run, 90, AD, mid=1)
+    run(env.store._execute("UPDATE messages SET created_at = now() - interval '25 hours'"))
+    run(bot.on_group_message(forwarded(91, 2, AD), env.ctx))
+    assert run(env.store.recent_ad_count(G, 91, 24)) == 0
+
+
+def test_short_forwards_and_new_forwards_are_not_ads(env, run):
+    posting_member(env, run, 90)
+    posting_member(env, run, 91)
+    message(env, run, 90, "mersi mult", mid=1)
+    run(bot.on_group_message(forwarded(91, 2, "mersi mult"), env.ctx))
+    run(bot.on_group_message(forwarded(91, 3, "Ceva nou, nemaivazut in grup pana acum"), env.ctx))
+    assert run(env.store.recent_ad_count(G, 91, 24)) == 0
+
+
+def test_text_someone_else_posted_is_not_an_ad_unless_forwarded(env, run):
+    # Typing the same answer as someone else ("multumesc pentru recomandare") is chat, not an ad.
+    posting_member(env, run, 90)
+    posting_member(env, run, 91)
+    message(env, run, 90, AD, mid=1)
+    message(env, run, 91, AD, mid=2)
+    assert run(env.store.recent_ad_count(G, 91, 24)) == 0
+
+
+def test_forwarded_stickers_follow_the_sticker_limit(env, run):
+    posting_member(env, run, 90)
+    for mid in (1, 2, 3):
+        sticker = {"file_id": "s", "file_unique_id": f"st{mid}", "width": 512, "height": 512,
+                   "type": "regular", "is_animated": False, "is_video": False}
+        run(bot.on_group_message(forwarded(90, mid, sticker=sticker), env.ctx))
+    env.bot.delete_message.assert_awaited_once_with(G, 3)
+
+
 def test_hidden_link_counts_as_a_link(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "vezi aici", mid=1,

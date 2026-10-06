@@ -42,6 +42,7 @@ WELCOME_TTL_SECONDS = 180
 NOTICE_TTL_SECONDS = 60
 CACHE_TTL_SECONDS = 300
 AD_LIMIT = 2
+VERIFIED_AD_LIMIT = 4  # she sent the admin a short verification video
 AD_WINDOW_HOURS = 24
 AD_REMINDER_EVERY_DAYS = 7  # at most one reminder a week
 # Static and animated/video stickers are counted separately, 2 of each per day.
@@ -100,6 +101,10 @@ async def send_temporary(bot, chat_id, text, seconds, **kwargs):
         spawn(delete_later(bot, chat_id, sent.message_id, seconds))
     except Exception as exc:
         log.warning("Could not send notice: %s", exc)
+
+
+async def ad_limit(user_id):
+    return VERIFIED_AD_LIMIT if await store.is_verified(GROUP_CHAT_ID, user_id) else AD_LIMIT
 
 
 async def is_admin(bot, chat_id, user_id):
@@ -215,7 +220,7 @@ async def invite_status(update, context):
     count = await store.invite_count(GROUP_CHAT_ID, user.id)
     await update.effective_message.reply_text(
         f"✅ Poți posta în grup.\n\n"
-        f"Reguli: cel mult {AD_LIMIT} reclame în 24 de ore (linkuri externe sau același text repetat), "
+        f"Reguli: cel mult {await ad_limit(user.id)} reclame în 24 de ore (linkuri externe sau același text repetat), "
         f"{STICKERS_PER_DAY} stickere pe zi și fără aceeași poză, link sau număr repostat.\n\n"
         f"Vrei să aduci pe cineva? 🔗 Linkul tău:\n{link}\n👥 Ai adus: {count}",
         disable_web_page_preview=True,
@@ -421,7 +426,8 @@ async def on_ad_reminder(update, context):
 async def handle_ad(bot, message):
     user = message.from_user
     count = await store.recent_ad_count(GROUP_CHAT_ID, user.id, AD_WINDOW_HOURS)
-    if count >= AD_LIMIT:
+    limit = await ad_limit(user.id)
+    if count >= limit:
         oldest = await store.oldest_ad(GROUP_CHAT_ID, user.id, AD_WINDOW_HOURS)
         retry = oldest["created_at"] + timedelta(hours=AD_WINDOW_HOURS) if oldest else datetime.now(timezone.utc)
         local_retry = retry.astimezone(LOCAL_TZ).strftime("%d.%m.%Y la %H:%M")
@@ -431,13 +437,13 @@ async def handle_ad(bot, message):
             pass
         await store.log_event(
             GROUP_CHAT_ID, user.id, "delete",
-            "reclame: limita 2/24h; următoarea postare permisă la " + local_retry,
+            f"reclame: limita {limit}/24h; următoarea postare permisă la " + local_retry,
             message.message_id,
         )
         await store.set_time(f"ad_limit:{GROUP_CHAT_ID}:{user.id}", datetime.now(timezone.utc))
         await send_temporary(
             bot, GROUP_CHAT_ID,
-            f"⛔ {user.mention_html()}, ai atins limita de {AD_LIMIT} reclame în ultimele 24 de ore.\n"
+            f"⛔ {user.mention_html()}, ai atins limita de {limit} reclame în ultimele 24 de ore.\n"
             f"Poți posta din nou după {local_retry}.\n\n{REAL_MESSAGES_NOTE}",
             NOTICE_TTL_SECONDS,
         )
@@ -576,7 +582,7 @@ async def on_group_message(update, context):
                 bot,
                 GROUP_CHAT_ID,
                 f"📣 {user.mention_html()}, reclama a fost acceptată. "
-                f"Ai folosit {new_count}/{AD_LIMIT} reclame în ultimele 24h.",
+                f"Ai folosit {new_count}/{await ad_limit(user.id)} reclame în ultimele 24h.",
                 NOTICE_TTL_SECONDS,
             )
 
@@ -651,7 +657,7 @@ async def run_ad_reminders(bot):
         refused = await store.get_time(f"ad_reminder_refused:{GROUP_CHAT_ID}:{user_id}")
         if refused and refused >= last_limit:
             continue  # Telegram refused this block's reminder; no retry until the next block
-        if await store.recent_ad_count(GROUP_CHAT_ID, user_id, AD_WINDOW_HOURS) >= AD_LIMIT:
+        if await store.recent_ad_count(GROUP_CHAT_ID, user_id, AD_WINDOW_HOURS) >= await ad_limit(user_id):
             continue  # still blocked
         try:
             await send_ad_reminder(bot, user_id)
@@ -718,7 +724,7 @@ async def cmd_whitelist(update, context):
     user_id, name = target_user(message, context.args)
     adding = message.text.split()[0].split("@")[0].lower() == "/whitelist"
     if user_id is None:
-        await send_temporary(bot, GROUP_CHAT_ID, "Dă reply la un mesaj al persoanei sau scrie id-ul ei după comandă.", NOTICE_TTL_SECONDS)
+        await admin_reply(update, bot, "Dă reply la un mesaj al persoanei sau scrie id-ul ei după comandă.")
         return
     if adding:
         await store.add_whitelist(GROUP_CHAT_ID, user_id, update.effective_user.id)
@@ -730,13 +736,60 @@ async def cmd_whitelist(update, context):
         text = f"{name} nu mai e pe lista albă: regulele obișnuite i se aplică din nou."
     else:
         text = f"{name} nu era pe lista albă."
-    await send_temporary(bot, GROUP_CHAT_ID, text, NOTICE_TTL_SECONDS)
+    await admin_reply(update, bot, text)
+
+
+async def cmd_verify(update, context):
+    """/verifica marks a member who sent the admin a verification video: she may post
+    VERIFIED_AD_LIMIT ads a day instead of AD_LIMIT, and the group is told, permanently.
+    /neverifica takes it back, answered only to the admin."""
+    message, bot = update.effective_message, context.bot
+    if not await is_admin(bot, GROUP_CHAT_ID, update.effective_user.id):
+        return
+    user_id, name = target_user(message, context.args)
+    adding = message.text.split()[0].split("@")[0].lower() == "/verifica"
+    if user_id is None:
+        await admin_reply(update, bot, "Dă reply la un mesaj al ei cu /verifica, sau scrie id-ul ei după comandă.")
+        return
+    if name.startswith("id "):
+        known = await store.get_member(GROUP_CHAT_ID, user_id)
+        if known and known["first_name"]:
+            name = html.escape(known["first_name"])
+    if adding:
+        await store.add_verified(GROUP_CHAT_ID, user_id, update.effective_user.id)
+        await store.log_event(GROUP_CHAT_ID, user_id, "verify", f"de {update.effective_user.id}")
+        if update.effective_chat.type != "private":
+            try:
+                await bot.delete_message(update.effective_chat.id, message.message_id)
+            except Exception:
+                pass
+        await bot.send_message(GROUP_CHAT_ID, f"🎥 {name} a fost verificată.", parse_mode="HTML")
+        if update.effective_chat.type == "private":
+            await message.reply_text(f"Gata, {name} poate posta {VERIFIED_AD_LIMIT} reclame pe zi.", parse_mode="HTML")
+        return
+    if await store.remove_verified(GROUP_CHAT_ID, user_id):
+        await store.log_event(GROUP_CHAT_ID, user_id, "unverify", f"de {update.effective_user.id}")
+        text = f"{name} nu mai e verificată: înapoi la {AD_LIMIT} reclame pe zi."
+    else:
+        text = f"{name} nu era verificată."
+    await admin_reply(update, bot, text)
 
 
 async def admin_reply(update, bot, text):
+    """Answer an admin command without the group seeing it: in the group the command is
+    deleted and the answer goes to her privately. Telegram lets a bot write first only to
+    someone who opened it once, so without that the 60s group notice is the fallback."""
     if update.effective_chat.type == "private":
         await update.effective_message.reply_text(text, parse_mode="HTML")
-    else:
+        return
+    try:
+        await bot.delete_message(update.effective_chat.id, update.effective_message.message_id)
+    except Exception:
+        pass
+    try:
+        await bot.send_message(update.effective_user.id, text, parse_mode="HTML")
+    except Exception as exc:
+        log.info("Admin answer not delivered privately (%s), posting it in the group", exc)
         await send_temporary(bot, GROUP_CHAT_ID, text, NOTICE_TTL_SECONDS)
 
 
@@ -744,6 +797,7 @@ EVENT_LABELS = {
     "delete": "șters", "warn": "avertisment", "mute": "mute", "unlock": "deblocat",
     "whitelist": "pus pe lista albă", "unwhitelist": "scos de pe lista albă",
     "reminder_refused": "reminder netrimis",
+    "verify": "verificată", "unverify": "scoasă de la verificate",
 }
 NEXT_ACTION_LABELS = {"delete": "ștergere", "warn": "avertisment", "mute": f"mute {MUTE_MINUTES} min"}
 
@@ -775,7 +829,7 @@ async def posting_status(bot, user_id, member, ads, now):
     if member.status == "restricted" and not getattr(member, "can_send_messages", True):
         until = getattr(member, "until_date", None)
         return f"🔇 Mute până {local_when(until, now)}." if until else "🔇 Nu poate scrie (restricționată fără termen)."
-    if ads >= AD_LIMIT:
+    if ads >= await ad_limit(user_id):
         oldest = await store.oldest_ad(GROUP_CHAT_ID, user_id, AD_WINDOW_HOURS)
         when = local_when(oldest["created_at"] + timedelta(hours=AD_WINDOW_HOURS), now) if oldest else "în curând"
         return f"⛔ Limita de reclame atinsă: mesaje normale da, reclame din nou {when}."
@@ -808,7 +862,9 @@ async def cmd_info(update, context):
     invites = await store.invite_count(GROUP_CHAT_ID, user_id)
 
     lines = [f"ℹ️ {name} · id {user_id}", await posting_status(bot, user_id, member, ads, now), ""]
-    lines.append(f"📣 Reclame ({AD_WINDOW_HOURS}h): {ads}/{AD_LIMIT}")
+    if await store.is_verified(GROUP_CHAT_ID, user_id):
+        lines.append(f"🎥 Verificată: {VERIFIED_AD_LIMIT} reclame pe zi")
+    lines.append(f"📣 Reclame ({AD_WINDOW_HOURS}h): {ads}/{await ad_limit(user_id)}")
     lines.append(f"🎨 Stickere ({STICKER_WINDOW_HOURS}h): statice {static}/{STICKERS_PER_DAY} · "
                  f"animate {animated}/{STICKERS_PER_DAY}")
     lines.append(f"⚠️ Abateri ({VIOLATION_WINDOW_HOURS:g}h): {violations} → următoarea: {next_action}")
@@ -868,6 +924,7 @@ def build_application():
     application.add_handler(CommandHandler("stats", cmd_stats, filters=group))
     application.add_handler(CommandHandler(["whitelist", "unwhitelist"], cmd_whitelist, filters=group))
     application.add_handler(CommandHandler("info", cmd_info, filters=group | private))
+    application.add_handler(CommandHandler(["verifica", "neverifica"], cmd_verify, filters=group | private))
     application.add_handler(CommandHandler("unlock", cmd_unlock, filters=group | private))
     application.add_handler(CommandHandler("start", cmd_start, filters=private))
     application.add_handler(CallbackQueryHandler(on_ad_reminder, pattern=r"^adreminder:"))

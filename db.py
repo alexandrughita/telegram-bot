@@ -49,6 +49,10 @@ CREATE TABLE IF NOT EXISTS whitelist (
     chat_id BIGINT NOT NULL, user_id BIGINT NOT NULL, added_by BIGINT NOT NULL,
     added_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (chat_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS verified (
+    chat_id BIGINT NOT NULL, user_id BIGINT NOT NULL, added_by BIGINT NOT NULL,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (chat_id, user_id)
+);
 CREATE TABLE IF NOT EXISTS bot_posts (
     id BIGSERIAL PRIMARY KEY, chat_id BIGINT NOT NULL, kind TEXT NOT NULL,
     ref TEXT NOT NULL, posted_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -178,6 +182,12 @@ class Store:
         await self._execute("INSERT INTO whitelist(chat_id,user_id,added_by) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING",(chat_id,user_id,added_by))
     async def remove_whitelist(self,chat_id,user_id):
         cur=await self._execute("DELETE FROM whitelist WHERE chat_id=%s AND user_id=%s",(chat_id,user_id)); return cur.rowcount==1
+    async def is_verified(self,chat_id,user_id):
+        r=await self._one("SELECT 1 AS x FROM verified WHERE chat_id=%s AND user_id=%s",(chat_id,user_id)); return r is not None
+    async def add_verified(self,chat_id,user_id,added_by):
+        await self._execute("INSERT INTO verified(chat_id,user_id,added_by) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING",(chat_id,user_id,added_by))
+    async def remove_verified(self,chat_id,user_id):
+        cur=await self._execute("DELETE FROM verified WHERE chat_id=%s AND user_id=%s",(chat_id,user_id)); return cur.rowcount==1
     async def get_time(self,key):
         r=await self._one("SELECT at FROM bot_state WHERE key=%s",(key,)); return r["at"] if r else None
     async def set_time(self,key,at):

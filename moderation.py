@@ -60,6 +60,25 @@ def extract_phones(text,entity_phones=()):
 def build_fingerprint(text,entity_urls=(),entity_phones=(),media=()):
     return Fingerprint(normalize_text(text),extract_urls(text,entity_urls),extract_phones(text,entity_phones),{m for m in media if m})
 
+# Selling words: a message with one of them is an ad even the first time, with no link.
+# Matched with diacritics, spaces and punctuation removed, so "C A N A L  P R I V A T",
+# "Scrie-mi aici" and "mesaj în privat" are caught.
+AD_KEYWORDS = ("showweb", "sexting", "dickrating", "canalprivat", "grupprivat", "snapchat",
+               "onlyfans", "fansly", "mesajinprivat", "scriemiinprivat", "scriemiaici", "haiinprivat")
+# Ad layouts are built from custom emoji (Premium "stickers" inside the text); a chat message
+# rarely carries this many.
+AD_CUSTOM_EMOJI = 5
+
+def compact_text(text):
+    text=unicodedata.normalize("NFKC",text or "").lower()
+    text="".join(c for c in unicodedata.normalize("NFD",text) if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]","",text)
+
+def content_ad(text,custom_emoji=0):
+    """An ad by its content: selling words, or a layout of custom emoji."""
+    compact=compact_text(text)
+    return custom_emoji>=AD_CUSTOM_EMOJI or any(k in compact for k in AD_KEYWORDS)
+
 def same_ad_text(new,old):
     """Repeated text, on normalized strings: the same text, or a reworded copy of it."""
     if len(new)>=MIN_TEXT_LENGTH_EXACT and new==old: return True

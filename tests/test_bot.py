@@ -748,7 +748,7 @@ def test_only_admins_can_verify(env, run):
 
 
 # ---- /reclama, /ban -------------------------------------------------------
-MISSED_AD = "Fete noi in zona ta, scrie-mi in privat"  # no link, first time: the rules let it through
+MISSED_AD = "Fete noi in zona ta, astept mesajul tau"  # no link, no selling words: the rules let it through
 
 
 def test_reclama_counts_a_missed_ad_so_the_next_one_is_deleted(env, run):
@@ -818,6 +818,21 @@ def test_a_refused_delete_is_logged_as_such_and_support_told_once(env, run):
     assert events(env, run, 90) == ["delete_failed", "delete_failed"]
     alerts = [c for c in env.bot.send_message.call_args_list if c.args[0] == S]
     assert len(alerts) == 1 and "Delete messages" in alerts[0].args[1]
+
+
+def test_an_ad_by_its_content_counts_the_first_time(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Hei! Show web doar pentru tine, sexting", mid=1)
+    message(env, run, 90, "Canal privat pe Snapchat, scrie-mi", mid=2)
+    assert member_deletions(env) == [2]
+
+
+def test_custom_emoji_layout_counts_as_an_ad(env, run):
+    posting_member(env, run, 90)
+    emoji = [{"type": "custom_emoji", "offset": i, "length": 1, "custom_emoji_id": str(i)} for i in range(5)]
+    message(env, run, 90, "abcde Hai la mine", mid=1, entities=emoji)
+    message(env, run, 90, "Vezi https://example.com/1", mid=2)
+    assert member_deletions(env) == [2]
 
 
 # ---- member tags ----------------------------------------------------------

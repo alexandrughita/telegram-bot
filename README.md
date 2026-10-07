@@ -22,6 +22,10 @@ bot's private chat.
 **Moderation** (for everyone except the group's admins, read live from Telegram)
 - A message containing a link to **approape.ro** (or a subdomain, including a link hidden
   behind text) is exempt from every rule below.
+- **An ad by its content** counts as an ad even the first time, with no link: selling words
+  (`AD_KEYWORDS` in `moderation.py`: show web, sexting, dick rating, canal/grup privat,
+  Snapchat, OnlyFans, "mesaj în privat", "scrie-mi aici"…, matched without diacritics,
+  spaces or fancy fonts), or 5+ custom emoji in one message.
 - **Ads: at most 1 per 24 hours, 3 for members an admin verified with `/verifica`.** An ad is a message with a link outside approape.ro, or
   the same text (≥ 15 characters after normalising) posted again within 24 hours, or a
   reworded copy of it (≥ 25 characters, ~75% alike; "fancy font" letters count as plain

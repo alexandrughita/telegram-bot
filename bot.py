@@ -19,8 +19,8 @@ from telegram.ext import (
 
 from db import Store
 from moderation import (
-    MIN_TEXT_LENGTH_EXACT, build_fingerprint, duplicate_reason, has_external_link, links_to_approape,
-    same_ad_text, violation_action,
+    MIN_TEXT_LENGTH_EXACT, build_fingerprint, content_ad, duplicate_reason, has_external_link,
+    links_to_approape, same_ad_text, violation_action,
 )
 import posts
 
@@ -591,7 +591,9 @@ async def on_group_message(update, context):
             DUPLICATE_COOLDOWN_HOURS,
         )
 
-        is_ad = external_link_ad or text_ad
+        entities = (message.entities or ()) + (message.caption_entities or ())
+        custom_emoji = sum(e.type == MessageEntity.CUSTOM_EMOJI for e in entities)
+        is_ad = external_link_ad or text_ad or content_ad(message.text or message.caption or "", custom_emoji)
         if is_ad:
             await tag_advertiser(bot, message)
 

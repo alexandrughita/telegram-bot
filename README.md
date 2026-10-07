@@ -22,6 +22,15 @@ bot's private chat.
 **Moderation** (for everyone except the group's admins, read live from Telegram)
 - A message containing a link to **approape.ro** (or a subdomain, including a link hidden
   behind text) is exempt from every rule below.
+- **Illegal content** (minors, pedophilia, zoophilia, gore, snuff: `ILLEGAL_RE` in
+  `moderation.py`) bans the sender outright, whitelist or not, deletes all her messages and
+  alerts `SUPPORT_CHAT_ID` with the text. An **age under 18** ("16 ani", "sub 18") may be
+  legal ("nu accept sub 18 ani"), so it is deleted and sent to support with `/ban <id>`.
+  Text only: images are not inspected, use `/ban` for those.
+- **An ad by its content** counts as an ad even the first time, with no link: selling words
+  (`AD_KEYWORDS` in `moderation.py`: show web, sexting, dick rating, canal/grup privat,
+  Snapchat, OnlyFans, "mesaj în privat", "scrie-mi aici"…, matched without diacritics,
+  spaces or fancy fonts), or 5+ custom emoji in one message.
 - **Ads: at most 1 per 24 hours, 3 for members an admin verified with `/verifica`.** An ad is a message with a link outside approape.ro, or
   the same text (≥ 15 characters after normalising) posted again within 24 hours, or a
   reworded copy of it (≥ 25 characters, ~75% alike; "fancy font" letters count as plain
@@ -52,6 +61,9 @@ bot's private chat.
 **Admin overrides**
 - `/reclama`, as a reply to a message the rules missed: it counts as her ad, exactly as if
   the bot had caught it. If she had no ads left it is deleted with the limit note.
+  The bot learns from it for good (`learned_ads`): a similar text (~75% alike) from anyone
+  is an ad from then on. Words after the command, comma-separated, become keywords
+  (`ad_keywords`, at least 4 letters): `/reclama video call, cam show`, also without a reply.
 - `/ban`, as a reply or with her id: she is banned for good and her messages are deleted
   (Telegram's `revoke_messages`, plus the last 24h the bot has on record). Needs the
   *Ban users* right; a refusal is explained to the admin.
@@ -104,7 +116,7 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
 | `/whitelist`, `/unwhitelist` | group, as a reply to the person or with her id | admins |
 | `/info` | group (reply or id) or private (id) | admins — status in the group, invites brought, ads used in 24h, violations |
 | `/unlock` | group (reply or id) or private (id) | admins — lifts a mute; unlike `/whitelist`, every other rule still applies |
-| `/reclama` | group, as a reply | admins — counts the message as her ad; deleted if she had none left |
+| `/reclama [cuvinte, …]` | group, as a reply (or just the words) | admins — counts the message as her ad, learns its text; words become keywords |
 | `/ban` | group (reply or id) or private (id) | admins — bans her and deletes her messages |
 | `/chatid` | anywhere | group admins / anyone in private |
 

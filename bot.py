@@ -19,8 +19,8 @@ from telegram.ext import (
 
 from db import Store
 from moderation import (
-    MIN_TEXT_LENGTH_EXACT, build_fingerprint, duplicate_reason, has_external_link, links_to_approape,
-    same_ad_text, violation_action,
+    MIN_KEYWORD_LENGTH, MIN_TEXT_LENGTH_EXACT, build_fingerprint, compact_text, content_ad, duplicate_reason, has_external_link, illegal_content,
+    links_to_approape, normalize_text, same_ad_text, violation_action,
 )
 import posts
 
@@ -538,6 +538,25 @@ async def on_group_message(update, context):
     user = message.from_user
     if not user or user.is_bot or await is_admin(bot, GROUP_CHAT_ID, user.id):
         return
+
+    # Illegal content (minors, gore…) is banned outright, whitelist or not. An age under 18
+    # may be legal ("nu accept sub 18 ani"), so it is deleted and left to a person.
+    text = message.text or message.caption or ""
+    verdict = illegal_content(text)
+    if verdict == "ban":
+        error = await ban_member(bot, user.id, message.message_id, "conținut ilegal (automat)")
+        await alert_support(bot, f"🚫 Ban automat, conținut ilegal: {user.mention_html()} · id {user.id}\n"
+                                 + (f"⚠️ Telegram a refuzat banul: {html.escape(error)}\n" if error else "")
+                                 + f"<blockquote>{html.escape(text[:500])}</blockquote>")
+        return
+    if verdict == "review":
+        if await delete_member_message(bot, message, user.id, "vârstă sub 18 menționată"):
+            await store.log_event(GROUP_CHAT_ID, user.id, "delete", "vârstă sub 18 menționată", message.message_id)
+        await alert_support(bot, f"⚠️ Mesaj șters, menționează o vârstă sub 18: {user.mention_html()} · id {user.id}\n"
+                                 f"<blockquote>{html.escape(text[:500])}</blockquote>\n"
+                                 f"Dacă e ilegal: /ban {user.id} (în privat la bot)")
+        return
+
     if await store.is_whitelisted(GROUP_CHAT_ID, user.id):
         return
 
@@ -591,7 +610,10 @@ async def on_group_message(update, context):
             DUPLICATE_COOLDOWN_HOURS,
         )
 
-        is_ad = external_link_ad or text_ad
+        entities = (message.entities or ()) + (message.caption_entities or ())
+        custom_emoji = sum(e.type == MessageEntity.CUSTOM_EMOJI for e in entities)
+        is_ad = external_link_ad or text_ad or content_ad(
+            text, custom_emoji, await store.ad_keywords(GROUP_CHAT_ID), await store.learned_ads(GROUP_CHAT_ID))
         if is_ad:
             await tag_advertiser(bot, message)
 
@@ -826,17 +848,32 @@ async def cmd_verify(update, context):
 
 async def cmd_mark_ad(update, context):
     """/reclama, as a reply: a message the rules missed is an ad. It counts toward her daily
-    limit as if the bot had caught it, so with no ads left it is deleted with the limit note."""
+    limit as if the bot had caught it, so with no ads left it is deleted with the limit note.
+    The bot learns from it for good: a similar text from anyone is an ad from then on, and
+    words after the command (comma-separated, with or without a reply) become keywords."""
     message, bot = update.effective_message, context.bot
-    if not await is_admin(bot, GROUP_CHAT_ID, update.effective_user.id):
+    admin_id = update.effective_user.id
+    if not await is_admin(bot, GROUP_CHAT_ID, admin_id):
         return
+    keywords = [k for k in (compact_text(p) for p in " ".join(context.args).split(","))
+                if len(k) >= MIN_KEYWORD_LENGTH]
+    for keyword in keywords:
+        await store.add_ad_keyword(GROUP_CHAT_ID, keyword, admin_id)
+    learned_words = f"\nCuvinte noi de reclamă: {', '.join(keywords)}." if keywords else ""
     ad = message.reply_to_message
     if not ad or not ad.from_user or ad.from_user.is_bot or ad.sender_chat:
-        await admin_reply(update, bot, "Dă reply cu /reclama la mesajul care e reclamă.")
+        await admin_reply(update, bot, learned_words.strip() if keywords else
+                          "Dă reply cu /reclama la mesajul care e reclamă, sau scrie după comandă "
+                          "cuvintele de reclamă, separate prin virgulă.")
         return
+    ad_text = normalize_text(ad.text or ad.caption or "")
+    if len(ad_text) >= MIN_TEXT_LENGTH_EXACT:
+        await store.add_learned_ad(GROUP_CHAT_ID, ad_text, admin_id)
+        learned_words += "\nAm învățat textul: mesajele asemănătoare, de la oricine, sunt reclame de acum."
     user, name = ad.from_user, ad.from_user.mention_html()
     if await is_admin(bot, GROUP_CHAT_ID, user.id) or await store.is_whitelisted(GROUP_CHAT_ID, user.id):
-        await admin_reply(update, bot, f"{name} e admin sau pe lista albă: limita de reclame nu i se aplică.")
+        await admin_reply(update, bot, f"{name} e admin sau pe lista albă: limita de reclame nu i se aplică."
+                          + learned_words)
         return
     async with _moderation_lock:
         await tag_advertiser(bot, ad)
@@ -853,7 +890,7 @@ async def cmd_mark_ad(update, context):
             await store.log_event(GROUP_CHAT_ID, user.id, "ad_marked", f"de {update.effective_user.id}", ad.message_id)
             count = await store.recent_ad_count(GROUP_CHAT_ID, user.id, AD_WINDOW_HOURS)
             text = f"📣 Numărat ca reclamă: {name} a folosit {count}/{await ad_limit(user.id)} reclame în ultimele 24h."
-    await admin_reply(update, bot, text)
+    await admin_reply(update, bot, text + learned_words)
 
 
 async def cmd_ban(update, context):
@@ -869,24 +906,43 @@ async def cmd_ban(update, context):
     if await is_admin(bot, GROUP_CHAT_ID, user_id):
         await admin_reply(update, bot, f"{name} e admin: nu o pot bana.")
         return
+    replied = message.reply_to_message.message_id if message.reply_to_message else None
+    error = await ban_member(bot, user_id, replied, f"de {update.effective_user.id}")
+    if error:
+        await admin_reply(update, bot, f"Telegram nu m-a lăsat să o banez pe {name} ({html.escape(error)}). "
+                                       "Verifică dacă botul e admin cu dreptul „Ban users”.")
+        return
+    await admin_reply(update, bot, f"🚫 {name} a fost banată, iar mesajele ei din grup au fost șterse.")
+
+
+async def ban_member(bot, user_id, message_id, reason):
+    """Bans her for good and deletes her messages: Telegram's revoke_messages, plus the ones
+    the bot has on record (the last 24h) and `message_id`. Returns Telegram's refusal, or None."""
     try:
         await bot.ban_chat_member(GROUP_CHAT_ID, user_id, revoke_messages=True)
     except Exception as exc:
         log.warning("Ban of %s refused: %s", user_id, exc)
-        await admin_reply(update, bot, f"Telegram nu m-a lăsat să o banez pe {name} ({html.escape(str(exc))}). "
-                                       "Verifică dacă botul e admin cu dreptul „Ban users”.")
-        return
+        return str(exc)
     ids = set(await store.message_ids(GROUP_CHAT_ID, user_id))
-    if message.reply_to_message:
-        ids.add(message.reply_to_message.message_id)
+    if message_id:
+        ids.add(message_id)
     ids = sorted(ids)
     for start in range(0, len(ids), 100):  # Telegram takes at most 100 per call
         try:
             await bot.delete_messages(GROUP_CHAT_ID, ids[start:start + 100])
         except Exception as exc:
             log.warning("Messages of banned %s not deleted: %s", user_id, exc)
-    await store.log_event(GROUP_CHAT_ID, user_id, "ban", f"de {update.effective_user.id}")
-    await admin_reply(update, bot, f"🚫 {name} a fost banată, iar mesajele ei din grup au fost șterse.")
+    await store.log_event(GROUP_CHAT_ID, user_id, "ban", reason, message_id)
+    return None
+
+
+async def alert_support(bot, text):
+    if not SUPPORT_CHAT_ID:
+        return
+    try:
+        await bot.send_message(SUPPORT_CHAT_ID, text, parse_mode="HTML")
+    except Exception as exc:
+        log.warning("Support alert not sent: %s", exc)
 
 
 async def admin_reply(update, bot, text):

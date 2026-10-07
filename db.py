@@ -61,6 +61,14 @@ CREATE INDEX IF NOT EXISTS idx_bot_posts_time ON bot_posts(chat_id, posted_at);
 CREATE TABLE IF NOT EXISTS bot_state (
     key TEXT PRIMARY KEY, at TIMESTAMPTZ NOT NULL
 );
+CREATE TABLE IF NOT EXISTS learned_ads (
+    chat_id BIGINT NOT NULL, text TEXT NOT NULL, added_by BIGINT NOT NULL,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (chat_id, text)
+);
+CREATE TABLE IF NOT EXISTS ad_keywords (
+    chat_id BIGINT NOT NULL, keyword TEXT NOT NULL, added_by BIGINT NOT NULL,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (chat_id, keyword)
+);
 CREATE TABLE IF NOT EXISTS support_threads (
     support_message_id BIGINT PRIMARY KEY, user_id BIGINT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -135,6 +143,16 @@ class Store:
             AND created_at >= now() - %s * interval '1 hour'""",(chat_id,user_id,hours))
     async def mark_ads(self,ids):
         if ids: await self._execute("UPDATE messages SET is_ad=TRUE WHERE id = ANY(%s)",(list(ids),))
+    async def add_learned_ad(self,chat_id,text,added_by):
+        await self._execute("""INSERT INTO learned_ads(chat_id,text,added_by) VALUES(%s,%s,%s)
+            ON CONFLICT DO NOTHING""",(chat_id,text,added_by))
+    async def learned_ads(self,chat_id):
+        return [r["text"] for r in await self._all("SELECT text FROM learned_ads WHERE chat_id=%s",(chat_id,))]
+    async def add_ad_keyword(self,chat_id,keyword,added_by):
+        await self._execute("""INSERT INTO ad_keywords(chat_id,keyword,added_by) VALUES(%s,%s,%s)
+            ON CONFLICT DO NOTHING""",(chat_id,keyword,added_by))
+    async def ad_keywords(self,chat_id):
+        return [r["keyword"] for r in await self._all("SELECT keyword FROM ad_keywords WHERE chat_id=%s",(chat_id,))]
     async def find_message(self,chat_id,message_id):
         return await self._one("SELECT id,is_ad FROM messages WHERE chat_id=%s AND message_id=%s",(chat_id,message_id))
     async def message_ids(self,chat_id,user_id):

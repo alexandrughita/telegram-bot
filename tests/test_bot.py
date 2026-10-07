@@ -69,7 +69,7 @@ def run():
 def env(run, monkeypatch):
     store = Store(DSN)
     run(store.open())
-    run(store._execute("TRUNCATE members, invite_links, invites, messages, violations, support_threads, moderation_events, bot_posts, bot_state, whitelist, verified"))
+    run(store._execute("TRUNCATE members, invite_links, invites, messages, violations, support_threads, moderation_events, bot_posts, bot_state, whitelist, verified, learned_ads, ad_keywords"))
     bot.store = store
     bot._admin_cache.clear()
     bot._permissions_cache.clear()
@@ -618,13 +618,13 @@ def test_tick_endpoint_refuses_without_the_secret(monkeypatch):
 
 
 # ---- whitelist ------------------------------------------------------------
-def group_command(env, run, uid, text, reply_to_uid=None, handler=None):
+def group_command(env, run, uid, text, reply_to_uid=None, handler=None, reply_text="hei"):
     msg = {"message_id": 30, "date": 0, "from": user(uid), "text": text,
            "chat": {"id": G, "type": "supergroup"},
            "entities": [{"type": "bot_command", "offset": 0, "length": len(text.split()[0])}]}
     if reply_to_uid:
         msg["reply_to_message"] = {"message_id": 29, "date": 0, "from": user(reply_to_uid),
-                                   "chat": {"id": G, "type": "supergroup"}, "text": "hei"}
+                                   "chat": {"id": G, "type": "supergroup"}, "text": reply_text}
     upd = Update.de_json({"update_id": 6, "message": msg}, None)
     run((handler or bot.cmd_whitelist)(upd, SimpleNamespace(bot=env.bot, args=text.split()[1:])))
 
@@ -748,7 +748,7 @@ def test_only_admins_can_verify(env, run):
 
 
 # ---- /reclama, /ban -------------------------------------------------------
-MISSED_AD = "Fete noi in zona ta, scrie-mi in privat"  # no link, first time: the rules let it through
+MISSED_AD = "Fete noi in zona ta, astept mesajul tau"  # no link, no selling words: the rules let it through
 
 
 def test_reclama_counts_a_missed_ad_so_the_next_one_is_deleted(env, run):
@@ -818,6 +818,67 @@ def test_a_refused_delete_is_logged_as_such_and_support_told_once(env, run):
     assert events(env, run, 90) == ["delete_failed", "delete_failed"]
     alerts = [c for c in env.bot.send_message.call_args_list if c.args[0] == S]
     assert len(alerts) == 1 and "Delete messages" in alerts[0].args[1]
+
+
+def test_an_ad_by_its_content_counts_the_first_time(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Hei! Show web doar pentru tine, sexting", mid=1)
+    message(env, run, 90, "Canal privat pe Snapchat, scrie-mi", mid=2)
+    assert member_deletions(env) == [2]
+
+
+def test_custom_emoji_layout_counts_as_an_ad(env, run):
+    posting_member(env, run, 90)
+    emoji = [{"type": "custom_emoji", "offset": i, "length": 1, "custom_emoji_id": str(i)} for i in range(5)]
+    message(env, run, 90, "abcde Hai la mine", mid=1, entities=emoji)
+    message(env, run, 90, "Vezi https://example.com/1", mid=2)
+    assert member_deletions(env) == [2]
+
+
+def test_reclama_learns_the_ad_so_a_similar_one_from_anyone_counts(env, run):
+    for uid in (90, 91):
+        posting_member(env, run, uid)
+    message(env, run, 90, MISSED_AD, mid=29)
+    group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad, reply_text=MISSED_AD)
+    assert "Am învățat" in env.bot.send_message.call_args.args[1]
+    message(env, run, 91, "Fete noi in zona ta, astept mesajele tale", mid=40)  # first ad of hers
+    message(env, run, 91, "Alt anunt, vezi https://example.com/1", mid=41)
+    assert member_deletions(env) == [41]
+
+
+def test_reclama_words_become_keywords_with_or_without_a_reply(env, run):
+    posting_member(env, run, 91)
+    group_command(env, run, ADMIN_ID, "/reclama Video Call, cam", handler=bot.cmd_mark_ad)
+    assert "videocall" in env.bot.send_message.call_args.args[1]
+    assert run(env.store.ad_keywords(G)) == ["videocall"]  # "cam" is too short to be safe
+    message(env, run, 91, "Fac video-call seara", mid=1)
+    message(env, run, 91, "Și video call dimineața", mid=2)
+    assert member_deletions(env) == [2]
+
+
+def test_illegal_content_bans_her_and_deletes_everything(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Salut tuturor", mid=1)
+    message(env, run, 90, "Am si fete minore", mid=2)
+    env.bot.ban_chat_member.assert_awaited_once_with(G, 90, revoke_messages=True)
+    env.bot.delete_messages.assert_awaited_once_with(G, [1, 2])
+    alert = env.bot.send_message.call_args
+    assert alert.args[0] == S and "Ban automat" in alert.args[1]
+    assert events(env, run, 90) == ["ban"]
+
+
+def test_illegal_content_is_banned_even_when_whitelisted(env, run):
+    group_command(env, run, ADMIN_ID, "/whitelist 90")
+    message(env, run, 90, "video gore", mid=1)
+    env.bot.ban_chat_member.assert_awaited_once()
+
+
+def test_an_age_under_18_is_deleted_and_sent_to_support_not_banned(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Fata 17 ani, Bucuresti", mid=1)
+    assert member_deletions(env) == [1]
+    env.bot.ban_chat_member.assert_not_awaited()
+    assert "/ban 90" in env.bot.send_message.call_args.args[1]
 
 
 # ---- member tags ----------------------------------------------------------

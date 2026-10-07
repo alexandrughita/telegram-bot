@@ -1,5 +1,5 @@
 from moderation import (
-    Fingerprint, build_fingerprint, duplicate_reason, extract_phones, extract_urls,
+    Fingerprint, build_fingerprint, content_ad, duplicate_reason, illegal_content, extract_phones, extract_urls,
     normalize_text, normalize_url, same_ad_text, violation_action,
 )
 
@@ -72,3 +72,43 @@ def test_links_to_approape_matches_the_domain_and_subdomains_only():
     assert not links_to_approape(extract_urls("https://approape.ro@evil.com/x"))
     assert not links_to_approape(extract_urls("https://notapproape.ro"))
     assert not links_to_approape(extract_urls("scrie approape ro"))
+
+
+def test_selling_words_make_an_ad_whatever_the_spelling():
+    for text in ("Show web doar pentru tine", "🍆 DICK RATING 🍆", "C A N A L   P R I V A T",
+                 "Doamne/domnișoare nesatisfăcute? Mesaj in privat.", "Scrie-mi aici 👉",
+                 "Intră în grup privat", "𝐒𝐞𝐱𝐭𝐢𝐧𝐠", "mesaj în privat"):
+        assert content_ad(text), text
+
+
+def test_ordinary_chat_is_not_an_ad():
+    for text in ("Bună seara tuturor, ce mai faceți?", "Cineva din Cluj? Recomandări?",
+                 "Am avut o experiență foarte plăcută aseară"):
+        assert not content_ad(text), text
+
+
+def test_a_layout_of_custom_emoji_is_an_ad():
+    assert content_ad("Hei", custom_emoji=5)
+    assert not content_ad("Hei", custom_emoji=2)
+
+
+def test_illegal_content_is_banned():
+    for text in ("Am si fete minore", "Pedofilie", "Vând video gore", "minoră disponibilă", "jailbait pics"):
+        assert illegal_content(text) == "ban", text
+
+
+def test_an_age_under_18_goes_to_a_person():
+    for text in ("am 16 ani", "Fata 17 ani, Bucuresti", "nu accept sub 18 ani"):
+        assert illegal_content(text) == "review", text
+
+
+def test_lookalikes_are_not_illegal():
+    for text in ("probleme minore, nimic grav", "torpedo", "am 23 de ani", "lucrez de 20 ani", "Pedagog"):
+        assert illegal_content(text) is None, text
+
+
+def test_admin_keywords_and_learned_ads_count():
+    assert content_ad("Fac video-call seara", keywords=["videocall"])
+    learned = [normalize_text("Fete noi in zona ta, astept mesajul tau")]
+    assert content_ad("Fete noi în zona ta, aștept mesajele tale", learned=learned)
+    assert not content_ad("Bună seara tuturor, ce mai faceți?", keywords=["videocall"], learned=learned)

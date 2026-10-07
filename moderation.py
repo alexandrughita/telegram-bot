@@ -70,14 +70,31 @@ AD_KEYWORDS = ("showweb", "sexting", "dickrating", "canalprivat", "grupprivat", 
 AD_CUSTOM_EMOJI = 5
 
 def compact_text(text):
-    text=unicodedata.normalize("NFKC",text or "").lower()
-    text="".join(c for c in unicodedata.normalize("NFD",text) if not unicodedata.combining(c))
-    return re.sub(r"[^a-z0-9]","",text)
+    return re.sub(r"[^a-z0-9]","",plain_text(text))
 
 def content_ad(text,custom_emoji=0):
     """An ad by its content: selling words, or a layout of custom emoji."""
     compact=compact_text(text)
     return custom_emoji>=AD_CUSTOM_EMOJI or any(k in compact for k in AD_KEYWORDS)
+
+# Illegal content: the sender is banned and all her messages deleted. Whole words on the
+# text without diacritics; "minore" alone is left out ("probleme minore").
+ILLEGAL_RE = re.compile(
+    r"\b(?:pedo\w*|pedofil\w*|minora|minorei|minori|fete minore|fata minora|underage|jailbait|"
+    r"lolita|loli|child ?porn|zoofil\w*|bestiality|gore|snuff)\b")
+# An age under 18 is deleted and sent to support, not banned: "nu accept sub 18 ani" is legal.
+UNDERAGE_RE = re.compile(r"\b(?:1[0-7]|[1-9])\s*(?:ani|anisori|yo|y\.?o)\b|\bsub\s*18\b|\bunder\s*18\b")
+
+def plain_text(text):
+    text=unicodedata.normalize("NFKC",text or "").lower()
+    return "".join(c for c in unicodedata.normalize("NFD",text) if not unicodedata.combining(c))
+
+def illegal_content(text):
+    """'ban' for illegal content, 'review' for an age under 18, else None."""
+    plain=plain_text(text)
+    if ILLEGAL_RE.search(plain): return "ban"
+    if UNDERAGE_RE.search(plain): return "review"
+    return None
 
 def same_ad_text(new,old):
     """Repeated text, on normalized strings: the same text, or a reworded copy of it."""

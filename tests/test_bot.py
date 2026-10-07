@@ -835,6 +835,31 @@ def test_custom_emoji_layout_counts_as_an_ad(env, run):
     assert member_deletions(env) == [2]
 
 
+def test_illegal_content_bans_her_and_deletes_everything(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Salut tuturor", mid=1)
+    message(env, run, 90, "Am si fete minore", mid=2)
+    env.bot.ban_chat_member.assert_awaited_once_with(G, 90, revoke_messages=True)
+    env.bot.delete_messages.assert_awaited_once_with(G, [1, 2])
+    alert = env.bot.send_message.call_args
+    assert alert.args[0] == S and "Ban automat" in alert.args[1]
+    assert events(env, run, 90) == ["ban"]
+
+
+def test_illegal_content_is_banned_even_when_whitelisted(env, run):
+    group_command(env, run, ADMIN_ID, "/whitelist 90")
+    message(env, run, 90, "video gore", mid=1)
+    env.bot.ban_chat_member.assert_awaited_once()
+
+
+def test_an_age_under_18_is_deleted_and_sent_to_support_not_banned(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Fata 17 ani, Bucuresti", mid=1)
+    assert member_deletions(env) == [1]
+    env.bot.ban_chat_member.assert_not_awaited()
+    assert "/ban 90" in env.bot.send_message.call_args.args[1]
+
+
 # ---- member tags ----------------------------------------------------------
 def tags(env):
     return [(c.kwargs["api_kwargs"]["user_id"], c.kwargs["api_kwargs"]["tag"])

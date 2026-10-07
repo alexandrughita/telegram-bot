@@ -22,6 +22,11 @@ bot's private chat.
 **Moderation** (for everyone except the group's admins, read live from Telegram)
 - A message containing a link to **approape.ro** (or a subdomain, including a link hidden
   behind text) is exempt from every rule below.
+- **Illegal content** (minors, pedophilia, zoophilia, gore, snuff: `ILLEGAL_RE` in
+  `moderation.py`) bans the sender outright, whitelist or not, deletes all her messages and
+  alerts `SUPPORT_CHAT_ID` with the text. An **age under 18** ("16 ani", "sub 18") may be
+  legal ("nu accept sub 18 ani"), so it is deleted and sent to support with `/ban <id>`.
+  Text only: images are not inspected, use `/ban` for those.
 - **An ad by its content** counts as an ad even the first time, with no link: selling words
   (`AD_KEYWORDS` in `moderation.py`: show web, sexting, dick rating, canal/grup privat,
   Snapchat, OnlyFans, "mesaj în privat", "scrie-mi aici"…, matched without diacritics,

@@ -1,5 +1,5 @@
 from moderation import (
-    Fingerprint, build_fingerprint, content_ad, duplicate_reason, extract_phones, extract_urls,
+    Fingerprint, build_fingerprint, content_ad, duplicate_reason, illegal_content, extract_phones, extract_urls,
     normalize_text, normalize_url, same_ad_text, violation_action,
 )
 
@@ -90,3 +90,18 @@ def test_ordinary_chat_is_not_an_ad():
 def test_a_layout_of_custom_emoji_is_an_ad():
     assert content_ad("Hei", custom_emoji=5)
     assert not content_ad("Hei", custom_emoji=2)
+
+
+def test_illegal_content_is_banned():
+    for text in ("Am si fete minore", "Pedofilie", "Vând video gore", "minoră disponibilă", "jailbait pics"):
+        assert illegal_content(text) == "ban", text
+
+
+def test_an_age_under_18_goes_to_a_person():
+    for text in ("am 16 ani", "Fata 17 ani, Bucuresti", "nu accept sub 18 ani"):
+        assert illegal_content(text) == "review", text
+
+
+def test_lookalikes_are_not_illegal():
+    for text in ("probleme minore, nimic grav", "torpedo", "am 23 de ani", "lucrez de 20 ani", "Pedagog"):
+        assert illegal_content(text) is None, text

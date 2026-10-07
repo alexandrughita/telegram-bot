@@ -35,6 +35,8 @@ class FakeBot:
         self.links = 0
         self.restrict_chat_member = AsyncMock()
         self.delete_message = AsyncMock()
+        self.delete_messages = AsyncMock()
+        self.ban_chat_member = AsyncMock()
         self.send_message = AsyncMock(return_value=SimpleNamespace(message_id=500))
         self.copy_message = AsyncMock(side_effect=lambda *a, **k: SimpleNamespace(message_id=501))
         self.get_chat = AsyncMock(return_value=SimpleNamespace(permissions=None))
@@ -73,6 +75,7 @@ def env(run, monkeypatch):
     bot._support_ack_at.clear()
     bot._moderation_lock = asyncio.Lock()  # each test runs on its own event loop
     bot._tick_lock = asyncio.Lock()
+    bot._delete_refusal_reported = False
     fake = FakeBot()
     yield SimpleNamespace(bot=fake, store=store, ctx=SimpleNamespace(bot=fake, args=[]))
     run(asyncio.sleep(0))
@@ -734,6 +737,79 @@ def test_admin_answer_falls_back_to_the_group_when_she_never_opened_the_bot(env,
 def test_only_admins_can_verify(env, run):
     group_command(env, run, 91, "/verifica", reply_to_uid=91, handler=bot.cmd_verify)
     assert not run(env.store.is_verified(G, 91))
+
+
+# ---- /reclama, /ban -------------------------------------------------------
+MISSED_AD = "Fete noi in zona ta, scrie-mi in privat"  # no link, first time: the rules let it through
+
+
+def test_reclama_counts_a_missed_ad_so_the_next_one_is_deleted(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, MISSED_AD, mid=29)  # group_command replies to message 29
+    group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad)
+    assert "1/1 reclame" in env.bot.send_message.call_args.args[1]
+    message(env, run, 90, "Alt anunt, vezi https://example.com/1", mid=31)
+    assert member_deletions(env) == [31]
+    assert events(env, run, 90) == ["ad_marked", "delete"]
+
+
+def test_reclama_deletes_the_ad_when_she_has_none_left(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
+    message(env, run, 90, MISSED_AD, mid=29)
+    group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad)
+    assert member_deletions(env) == [29]
+    assert any("ai atins limita" in c.args[1] for c in env.bot.send_message.call_args_list)
+
+
+def test_reclama_on_an_ad_already_counted_changes_nothing(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=29)
+    group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad)
+    assert member_deletions(env) == []
+    assert "deja" in env.bot.send_message.call_args.args[1]
+
+
+def test_only_admins_can_mark_ads(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, MISSED_AD, mid=29)
+    group_command(env, run, 91, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad)
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 0
+
+
+def test_ban_removes_her_and_deletes_her_messages(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Salut tuturor", mid=1)
+    message(env, run, 90, "Ce mai faceti azi", mid=2)
+    group_command(env, run, ADMIN_ID, "/ban", reply_to_uid=90, handler=bot.cmd_ban)
+    env.bot.ban_chat_member.assert_awaited_once_with(G, 90, revoke_messages=True)
+    env.bot.delete_messages.assert_awaited_once_with(G, [1, 2, 29])
+    assert events(env, run, 90) == ["ban"]
+
+
+def test_a_refused_ban_is_explained_to_the_admin(env, run):
+    env.bot.ban_chat_member = AsyncMock(side_effect=bot.Forbidden("not enough rights"))
+    group_command(env, run, ADMIN_ID, "/ban 90", handler=bot.cmd_ban)
+    assert "Ban users" in env.bot.send_message.call_args.args[1]
+    assert events(env, run, 90) == []
+
+
+def test_admins_cannot_be_banned_and_only_admins_can_ban(env, run):
+    group_command(env, run, ADMIN_ID, f"/ban {ADMIN_ID}", handler=bot.cmd_ban)
+    group_command(env, run, 91, "/ban", reply_to_uid=90, handler=bot.cmd_ban)
+    env.bot.ban_chat_member.assert_not_awaited()
+
+
+def test_a_refused_delete_is_logged_as_such_and_support_told_once(env, run):
+    posting_member(env, run, 90)
+    async def delete(chat_id, message_id):
+        raise bot.Forbidden("message can't be deleted")
+    env.bot.delete_message = AsyncMock(side_effect=delete)
+    for mid in (1, 2, 3):
+        message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
+    assert events(env, run, 90) == ["delete_failed", "delete_failed"]
+    alerts = [c for c in env.bot.send_message.call_args_list if c.args[0] == S]
+    assert len(alerts) == 1 and "Delete messages" in alerts[0].args[1]
 
 
 # ---- /start menu --------------------------------------------------------

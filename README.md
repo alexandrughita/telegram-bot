@@ -44,7 +44,18 @@ bot's private chat.
 - Messages posted "as a channel" are deleted; anonymous admins and posts from the linked
   channel are left alone.
 
-Every action (delete, warn, mute, unlock) is logged in `moderation_events` with its reason
+**Admin overrides**
+- `/reclama`, as a reply to a message the rules missed: it counts as her ad, exactly as if
+  the bot had caught it. If she had no ads left it is deleted with the limit note.
+- `/ban`, as a reply or with her id: she is banned for good and her messages are deleted
+  (Telegram's `revoke_messages`, plus the last 24h the bot has on record). Needs the
+  *Ban users* right; a refusal is explained to the admin.
+
+If Telegram refuses a deletion (usually: the bot lost *Delete messages*), it is logged as
+`delete_failed` with Telegram's reason, shown as **NEȘTERS** in `/info`, and the first
+refusal since start is sent to `SUPPORT_CHAT_ID`.
+
+Every action (delete, warn, mute, unlock, ban) is logged in `moderation_events` with its reason
 and kept for good, so "why was she muted?" can still be answered weeks later:
 
     SELECT created_at, event_type, reason FROM moderation_events
@@ -88,6 +99,8 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
 | `/whitelist`, `/unwhitelist` | group, as a reply to the person or with her id | admins |
 | `/info` | group (reply or id) or private (id) | admins — status in the group, invites brought, ads used in 24h, violations |
 | `/unlock` | group (reply or id) or private (id) | admins — lifts a mute; unlike `/whitelist`, every other rule still applies |
+| `/reclama` | group, as a reply | admins — counts the message as her ad; deleted if she had none left |
+| `/ban` | group (reply or id) or private (id) | admins — bans her and deletes her messages |
 | `/chatid` | anywhere | group admins / anyone in private |
 
 ## Setup

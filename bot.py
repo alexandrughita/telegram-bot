@@ -1014,7 +1014,8 @@ async def cmd_stats(update, context):
     if not await is_admin(context.bot, GROUP_CHAT_ID, update.effective_user.id):
         return
     s = await store.stats(GROUP_CHAT_ID)
-    await update.effective_message.reply_text(
+    await admin_reply(
+        update, context.bot,
         f"📊 Membri urmăriți: {s['members']}\n"
         f"Invitații: {s['invites']}\nAbateri (7 zile): {s['violations_7d']}"
     )

@@ -95,7 +95,7 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
 | `/start` | private | anyone — help menu (`?start=invite` → rules + invite link) |
 | `/invite`, `/status` | private | anyone — rules + invite link and how many she brought |
 | `/invite`, `/status` | group | button to the private chat |
-| `/stats` | group | admins |
+| `/stats` | group | admins — answered privately, the command is deleted |
 | `/whitelist`, `/unwhitelist` | group, as a reply to the person or with her id | admins |
 | `/info` | group (reply or id) or private (id) | admins — status in the group, invites brought, ads used in 24h, violations |
 | `/unlock` | group (reply or id) or private (id) | admins — lifts a mute; unlike `/whitelist`, every other rule still applies |

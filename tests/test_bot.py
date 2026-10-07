@@ -723,6 +723,13 @@ def test_admin_commands_in_the_group_are_answered_privately(env, run):
     assert all(c.args[0] != G for c in env.bot.send_message.call_args_list)
 
 
+def test_stats_is_answered_privately_and_the_command_deleted(env, run):
+    group_command(env, run, ADMIN_ID, "/stats", handler=bot.cmd_stats)
+    env.bot.delete_message.assert_any_await(G, COMMAND_MID)
+    assert env.bot.send_message.call_args.args[0] == ADMIN_ID
+    assert "Membri urmăriți" in env.bot.send_message.call_args.args[1]
+
+
 def test_admin_answer_falls_back_to_the_group_when_she_never_opened_the_bot(env, run):
     posting_member(env, run, 90)
     async def send(chat_id, text, **kwargs):

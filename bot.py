@@ -893,6 +893,36 @@ async def cmd_mark_ad(update, context):
     await admin_reply(update, bot, text + learned_words)
 
 
+async def cmd_unmark_ad(update, context):
+    """/nureclama undoes what /reclama taught: as a reply, the learned texts like that message
+    are forgotten and it no longer counts as her ad; with words, those keywords are removed;
+    alone, it lists what the bot learned."""
+    message, bot = update.effective_message, context.bot
+    if not await is_admin(bot, GROUP_CHAT_ID, update.effective_user.id):
+        return
+    lines = []
+    for keyword in (compact_text(p) for p in " ".join(context.args).split(",")):
+        if keyword:
+            removed = await store.remove_ad_keyword(GROUP_CHAT_ID, keyword)
+            lines.append(f"Cuvânt șters: {keyword}." if removed else f"„{keyword}” nu era printre cuvinte.")
+    replied = message.reply_to_message
+    if replied and replied.from_user and not replied.from_user.is_bot:
+        replied_text = normalize_text(replied.text or replied.caption or "")
+        forgotten = [t for t in await store.learned_ads(GROUP_CHAT_ID) if same_ad_text(replied_text, t)]
+        await store.remove_learned_ads(GROUP_CHAT_ID, forgotten)
+        await store.unmark_ad(GROUP_CHAT_ID, replied.message_id)
+        lines.append(f"Texte uitate: {len(forgotten)}. Mesajul nu mai e numărat ca reclamă.")
+    if not lines:
+        keywords = await store.ad_keywords(GROUP_CHAT_ID)
+        learned = await store.learned_ads(GROUP_CHAT_ID)
+        lines.append("Cuvinte învățate: " + (html.escape(", ".join(keywords)) if keywords else "niciunul"))
+        lines.append(f"Texte învățate: {len(learned)}")
+        lines += [f"• {html.escape(t[:60])}" for t in learned[:20]]
+        lines.append("\nDă reply cu /nureclama la un mesaj ca să uit textul lui, "
+                     "sau scrie /nureclama cuvânt1, cuvânt2.")
+    await admin_reply(update, bot, "\n".join(lines))
+
+
 async def cmd_ban(update, context):
     """/ban (reply or id) removes her from the group for good and deletes her messages:
     Telegram's revoke_messages, plus the ones the bot has on record (the last 24h)."""
@@ -1115,6 +1145,7 @@ def build_application():
     application.add_handler(CommandHandler(["verifica", "neverifica"], cmd_verify, filters=group | private))
     application.add_handler(CommandHandler("unlock", cmd_unlock, filters=group | private))
     application.add_handler(CommandHandler("reclama", cmd_mark_ad, filters=group))
+    application.add_handler(CommandHandler("nureclama", cmd_unmark_ad, filters=group | private))
     application.add_handler(CommandHandler("ban", cmd_ban, filters=group | private))
     application.add_handler(CommandHandler("start", cmd_start, filters=private))
     application.add_handler(CallbackQueryHandler(on_ad_reminder, pattern=r"^adreminder:"))

@@ -64,6 +64,9 @@ bot's private chat.
   The bot learns from it for good (`learned_ads`): a similar text (~75% alike) from anyone
   is an ad from then on. Words after the command, comma-separated, become keywords
   (`ad_keywords`, at least 4 letters): `/reclama video call, cam show`, also without a reply.
+- `/nureclama` undoes it: as a reply, the learned texts like that message are forgotten and
+  it no longer counts as her ad; `/nureclama video call` removes keywords; alone, it lists
+  what the bot learned.
 - `/ban`, as a reply or with her id: she is banned for good and her messages are deleted
   (Telegram's `revoke_messages`, plus the last 24h the bot has on record). Needs the
   *Ban users* right; a refusal is explained to the admin.
@@ -117,6 +120,7 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
 | `/info` | group (reply or id) or private (id) | admins — status in the group, invites brought, ads used in 24h, violations |
 | `/unlock` | group (reply or id) or private (id) | admins — lifts a mute; unlike `/whitelist`, every other rule still applies |
 | `/reclama [cuvinte, …]` | group, as a reply (or just the words) | admins — counts the message as her ad, learns its text; words become keywords |
+| `/nureclama [cuvinte, …]` | group (reply or words) or private (words) | admins — forgets learned texts / keywords; alone, lists them |
 | `/ban` | group (reply or id) or private (id) | admins — bans her and deletes her messages |
 | `/chatid` | anywhere | group admins / anyone in private |
 

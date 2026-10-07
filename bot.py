@@ -45,6 +45,9 @@ AD_LIMIT = 1
 VERIFIED_AD_LIMIT = 3  # she sent the admin a short verification video
 AD_WINDOW_HOURS = 24
 AD_REMINDER_EVERY_DAYS = 7  # at most one reminder a week
+# Telegram member tags: at most 16 characters, no emoji.
+VERIFIED_TAG = "verificată"
+UNVERIFIED_TAG = "neverificată"
 # Static and animated/video stickers are counted separately, 2 of each per day.
 STICKERS_PER_DAY = 2
 STICKER_WINDOW_HOURS = 24
@@ -72,6 +75,7 @@ _background = set()
 _moderation_lock = asyncio.Lock()
 _tick_lock = asyncio.Lock()
 _last_cleanup = 0.0
+_delete_refusal_reported = False
 LOCAL_TZ = ZoneInfo("Europe/Bucharest")
 
 
@@ -93,6 +97,30 @@ async def delete_later(bot, chat_id, message_id, seconds):
         await bot.delete_message(chat_id, message_id)
     except Exception:
         pass
+
+
+async def delete_member_message(bot, message, user_id, reason):
+    """Deletes a member's message; False when Telegram refused. A refusal is logged as
+    `delete_failed` with Telegram's reason instead of passing for a deletion, and the first
+    one since start is told to support: it usually means the bot lost "Delete messages"."""
+    global _delete_refusal_reported
+    try:
+        await bot.delete_message(message.chat_id, message.message_id)
+        return True
+    except Exception as exc:
+        log.warning("Message %s not deleted: %s", message.message_id, exc)
+        await store.log_event(GROUP_CHAT_ID, user_id, "delete_failed", f"Telegram: {exc} — {reason}",
+                              message.message_id)
+        if SUPPORT_CHAT_ID and not _delete_refusal_reported:
+            _delete_refusal_reported = True
+            try:
+                await bot.send_message(
+                    SUPPORT_CHAT_ID,
+                    f"⚠️ Telegram nu mă lasă să șterg mesaje din grup ({exc}). "
+                    "Verifică dacă botul e admin cu dreptul „Delete messages”.")
+            except Exception as alert_exc:
+                log.warning("Delete refusal not reported to support: %s", alert_exc)
+        return False
 
 
 async def send_temporary(bot, chat_id, text, seconds, **kwargs):
@@ -117,6 +145,25 @@ def verification_offer(group_title):
 
 async def ad_limit(user_id):
     return VERIFIED_AD_LIMIT if await store.is_verified(GROUP_CHAT_ID, user_id) else AD_LIMIT
+
+
+async def set_tag(bot, user_id, tag, current=None):
+    """The tag shown next to her name in the group (Bot API 9.5, not wrapped by
+    python-telegram-bot 22.5). Needs the bot's "manage tags" right; a refusal is only logged."""
+    if current == tag:
+        return
+    try:
+        await bot.do_api_request("setChatMemberTag",
+                                 api_kwargs={"chat_id": GROUP_CHAT_ID, "user_id": user_id, "tag": tag})
+    except Exception as exc:
+        log.warning("Tag %r not set for %s: %s", tag, user_id, exc)
+
+
+async def tag_advertiser(bot, message):
+    """Whoever posts ads is tagged: unverified, or verified once an admin ran /verifica."""
+    user_id = message.from_user.id
+    tag = VERIFIED_TAG if await store.is_verified(GROUP_CHAT_ID, user_id) else UNVERIFIED_TAG
+    await set_tag(bot, user_id, tag, message.api_kwargs.get("sender_tag"))
 
 
 async def is_admin(bot, chat_id, user_id):
@@ -346,13 +393,11 @@ def fingerprint_of(message):
 
 
 async def punish(bot, message, reason):
-    try:
-        await bot.delete_message(message.chat_id, message.message_id)
-    except Exception:
-        pass
+    deleted = await delete_member_message(bot, message, message.from_user.id, reason)
     count = await store.add_violation(message.chat_id, message.from_user.id, reason, VIOLATION_WINDOW_HOURS)
     action = violation_action(count)
-    await store.log_event(message.chat_id, message.from_user.id, action, reason, message.message_id)
+    if deleted or action != "delete":
+        await store.log_event(message.chat_id, message.from_user.id, action, reason, message.message_id)
     if action == "warn":
         await send_temporary(
             bot, message.chat_id,
@@ -444,15 +489,9 @@ async def handle_ad(bot, message):
         oldest = await store.oldest_ad(GROUP_CHAT_ID, user.id, AD_WINDOW_HOURS)
         retry = oldest["created_at"] + timedelta(hours=AD_WINDOW_HOURS) if oldest else datetime.now(timezone.utc)
         local_retry = retry.astimezone(LOCAL_TZ).strftime("%d.%m.%Y la %H:%M")
-        try:
-            await bot.delete_message(message.chat_id, message.message_id)
-        except Exception:
-            pass
-        await store.log_event(
-            GROUP_CHAT_ID, user.id, "delete",
-            f"reclame: limita {limit}/24h; următoarea postare permisă la " + local_retry,
-            message.message_id,
-        )
+        reason = f"reclame: limita {limit}/24h; următoarea postare permisă la " + local_retry
+        if await delete_member_message(bot, message, user.id, reason):
+            await store.log_event(GROUP_CHAT_ID, user.id, "delete", reason, message.message_id)
         await store.set_time(f"ad_limit:{GROUP_CHAT_ID}:{user.id}", datetime.now(timezone.utc))
         notice = (f"⛔ {user.mention_html()}, ai atins limita de {limit} {ads_word(limit)} pe zi. "
                   f"Poți posta din nou {friendly_when(retry, datetime.now(timezone.utc))}.")
@@ -486,17 +525,14 @@ async def on_group_message(update, context):
     if message.sender_chat:
         if message.sender_chat.id == GROUP_CHAT_ID:
             return
-        try:
-            await bot.delete_message(message.chat_id, message.message_id)
-        except Exception:
-            pass
-        await store.log_event(
-            GROUP_CHAT_ID,
-            message.sender_chat.id,
-            "delete",
-            "postare ca un canal",
-            message.message_id,
-        )
+        if await delete_member_message(bot, message, message.sender_chat.id, "postare ca un canal"):
+            await store.log_event(
+                GROUP_CHAT_ID,
+                message.sender_chat.id,
+                "delete",
+                "postare ca un canal",
+                message.message_id,
+            )
         return
 
     user = message.from_user
@@ -528,12 +564,9 @@ async def on_group_message(update, context):
         if sticker and await store.recent_sticker_count(
                 GROUP_CHAT_ID, user.id, STICKER_WINDOW_HOURS, static=is_static_sticker) >= STICKERS_PER_DAY:
             # Deleted and explained, but not a violation: no warning, no mute.
-            try:
-                await bot.delete_message(message.chat_id, message.message_id)
-            except Exception:
-                pass
-            await store.log_event(GROUP_CHAT_ID, user.id, "delete", "stickere: limita zilnică",
-                                  message.message_id)
+            if await delete_member_message(bot, message, user.id, "stickere: limita zilnică"):
+                await store.log_event(GROUP_CHAT_ID, user.id, "delete", "stickere: limita zilnică",
+                                      message.message_id)
             await send_temporary(
                 bot, GROUP_CHAT_ID,
                 f"{user.mention_html()}, poți trimite cel mult {STICKERS_PER_DAY} reclame pe zi. "
@@ -559,6 +592,8 @@ async def on_group_message(update, context):
         )
 
         is_ad = external_link_ad or text_ad
+        if is_ad:
+            await tag_advertiser(bot, message)
 
         if is_ad and not await handle_ad(bot, message):
             return
@@ -770,6 +805,7 @@ async def cmd_verify(update, context):
     if adding:
         await store.add_verified(GROUP_CHAT_ID, user_id, update.effective_user.id)
         await store.log_event(GROUP_CHAT_ID, user_id, "verify", f"de {update.effective_user.id}")
+        await set_tag(bot, user_id, VERIFIED_TAG)
         if update.effective_chat.type != "private":
             try:
                 await bot.delete_message(update.effective_chat.id, message.message_id)
@@ -781,10 +817,76 @@ async def cmd_verify(update, context):
         return
     if await store.remove_verified(GROUP_CHAT_ID, user_id):
         await store.log_event(GROUP_CHAT_ID, user_id, "unverify", f"de {update.effective_user.id}")
+        await set_tag(bot, user_id, UNVERIFIED_TAG)
         text = f"{name} nu mai e verificată: înapoi la {AD_LIMIT} reclame pe zi."
     else:
         text = f"{name} nu era verificată."
     await admin_reply(update, bot, text)
+
+
+async def cmd_mark_ad(update, context):
+    """/reclama, as a reply: a message the rules missed is an ad. It counts toward her daily
+    limit as if the bot had caught it, so with no ads left it is deleted with the limit note."""
+    message, bot = update.effective_message, context.bot
+    if not await is_admin(bot, GROUP_CHAT_ID, update.effective_user.id):
+        return
+    ad = message.reply_to_message
+    if not ad or not ad.from_user or ad.from_user.is_bot or ad.sender_chat:
+        await admin_reply(update, bot, "Dă reply cu /reclama la mesajul care e reclamă.")
+        return
+    user, name = ad.from_user, ad.from_user.mention_html()
+    if await is_admin(bot, GROUP_CHAT_ID, user.id) or await store.is_whitelisted(GROUP_CHAT_ID, user.id):
+        await admin_reply(update, bot, f"{name} e admin sau pe lista albă: limita de reclame nu i se aplică.")
+        return
+    async with _moderation_lock:
+        await tag_advertiser(bot, ad)
+        saved = await store.find_message(GROUP_CHAT_ID, ad.message_id)
+        if saved and saved["is_ad"]:
+            text = "Mesajul era deja numărat ca reclamă."
+        elif not await handle_ad(bot, ad):
+            text = f"{name} nu mai avea reclame azi: mesajul a fost șters, cu nota despre limită."
+        else:
+            if saved:
+                await store.mark_ads([saved["id"]])
+            else:
+                await store.save_message(GROUP_CHAT_ID, user.id, ad.message_id, fingerprint_of(ad), False, is_ad=True)
+            await store.log_event(GROUP_CHAT_ID, user.id, "ad_marked", f"de {update.effective_user.id}", ad.message_id)
+            count = await store.recent_ad_count(GROUP_CHAT_ID, user.id, AD_WINDOW_HOURS)
+            text = f"📣 Numărat ca reclamă: {name} a folosit {count}/{await ad_limit(user.id)} reclame în ultimele 24h."
+    await admin_reply(update, bot, text)
+
+
+async def cmd_ban(update, context):
+    """/ban (reply or id) removes her from the group for good and deletes her messages:
+    Telegram's revoke_messages, plus the ones the bot has on record (the last 24h)."""
+    message, bot = update.effective_message, context.bot
+    if not await is_admin(bot, GROUP_CHAT_ID, update.effective_user.id):
+        return
+    user_id, name = target_user(message, context.args)
+    if user_id is None:
+        await admin_reply(update, bot, "Dă reply la un mesaj al persoanei cu /ban, sau scrie id-ul ei după comandă.")
+        return
+    if await is_admin(bot, GROUP_CHAT_ID, user_id):
+        await admin_reply(update, bot, f"{name} e admin: nu o pot bana.")
+        return
+    try:
+        await bot.ban_chat_member(GROUP_CHAT_ID, user_id, revoke_messages=True)
+    except Exception as exc:
+        log.warning("Ban of %s refused: %s", user_id, exc)
+        await admin_reply(update, bot, f"Telegram nu m-a lăsat să o banez pe {name} ({html.escape(str(exc))}). "
+                                       "Verifică dacă botul e admin cu dreptul „Ban users”.")
+        return
+    ids = set(await store.message_ids(GROUP_CHAT_ID, user_id))
+    if message.reply_to_message:
+        ids.add(message.reply_to_message.message_id)
+    ids = sorted(ids)
+    for start in range(0, len(ids), 100):  # Telegram takes at most 100 per call
+        try:
+            await bot.delete_messages(GROUP_CHAT_ID, ids[start:start + 100])
+        except Exception as exc:
+            log.warning("Messages of banned %s not deleted: %s", user_id, exc)
+    await store.log_event(GROUP_CHAT_ID, user_id, "ban", f"de {update.effective_user.id}")
+    await admin_reply(update, bot, f"🚫 {name} a fost banată, iar mesajele ei din grup au fost șterse.")
 
 
 async def admin_reply(update, bot, text):
@@ -810,6 +912,7 @@ EVENT_LABELS = {
     "whitelist": "pus pe lista albă", "unwhitelist": "scos de pe lista albă",
     "reminder_refused": "reminder netrimis",
     "verify": "verificată", "unverify": "scoasă de la verificate",
+    "delete_failed": "NEȘTERS", "ad_marked": "marcat reclamă de admin", "ban": "banată",
 }
 NEXT_ACTION_LABELS = {"delete": "ștergere", "warn": "avertisment", "mute": f"mute {MUTE_MINUTES} min"}
 
@@ -938,7 +1041,8 @@ async def cmd_stats(update, context):
     if not await is_admin(context.bot, GROUP_CHAT_ID, update.effective_user.id):
         return
     s = await store.stats(GROUP_CHAT_ID)
-    await update.effective_message.reply_text(
+    await admin_reply(
+        update, context.bot,
         f"📊 Membri urmăriți: {s['members']}\n"
         f"Invitații: {s['invites']}\nAbateri (7 zile): {s['violations_7d']}"
     )
@@ -954,6 +1058,8 @@ def build_application():
     application.add_handler(CommandHandler("info", cmd_info, filters=group | private))
     application.add_handler(CommandHandler(["verifica", "neverifica"], cmd_verify, filters=group | private))
     application.add_handler(CommandHandler("unlock", cmd_unlock, filters=group | private))
+    application.add_handler(CommandHandler("reclama", cmd_mark_ad, filters=group))
+    application.add_handler(CommandHandler("ban", cmd_ban, filters=group | private))
     application.add_handler(CommandHandler("start", cmd_start, filters=private))
     application.add_handler(CallbackQueryHandler(on_ad_reminder, pattern=r"^adreminder:"))
     application.add_handler(CallbackQueryHandler(on_menu, pattern=r"^menu:"))

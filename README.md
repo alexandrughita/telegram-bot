@@ -44,7 +44,23 @@ bot's private chat.
 - Messages posted "as a channel" are deleted; anonymous admins and posts from the linked
   channel are left alone.
 
-Every action (delete, warn, mute, unlock) is logged in `moderation_events` with its reason
+**Member tags** (Telegram's tag next to her name; the bot needs the *manage tags* right)
+- Whoever posts an ad (caught by the bot or marked with `/reclama`) is tagged
+  **neverificată**; `/verifica` changes it to **verificată**, `/neverifica` back.
+  Admins cannot be tagged (Telegram tags regular members only). A refused tag is only logged.
+
+**Admin overrides**
+- `/reclama`, as a reply to a message the rules missed: it counts as her ad, exactly as if
+  the bot had caught it. If she had no ads left it is deleted with the limit note.
+- `/ban`, as a reply or with her id: she is banned for good and her messages are deleted
+  (Telegram's `revoke_messages`, plus the last 24h the bot has on record). Needs the
+  *Ban users* right; a refusal is explained to the admin.
+
+If Telegram refuses a deletion (usually: the bot lost *Delete messages*), it is logged as
+`delete_failed` with Telegram's reason, shown as **NEȘTERS** in `/info`, and the first
+refusal since start is sent to `SUPPORT_CHAT_ID`.
+
+Every action (delete, warn, mute, unlock, ban) is logged in `moderation_events` with its reason
 and kept for good, so "why was she muted?" can still be answered weeks later:
 
     SELECT created_at, event_type, reason FROM moderation_events
@@ -84,17 +100,19 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
 | `/start` | private | anyone — help menu (`?start=invite` → rules + invite link) |
 | `/invite`, `/status` | private | anyone — rules + invite link and how many she brought |
 | `/invite`, `/status` | group | button to the private chat |
-| `/stats` | group | admins |
+| `/stats` | group | admins — answered privately, the command is deleted |
 | `/whitelist`, `/unwhitelist` | group, as a reply to the person or with her id | admins |
 | `/info` | group (reply or id) or private (id) | admins — status in the group, invites brought, ads used in 24h, violations |
 | `/unlock` | group (reply or id) or private (id) | admins — lifts a mute; unlike `/whitelist`, every other rule still applies |
+| `/reclama` | group, as a reply | admins — counts the message as her ad; deleted if she had none left |
+| `/ban` | group (reply or id) or private (id) | admins — bans her and deletes her messages |
 | `/chatid` | anywhere | group admins / anyone in private |
 
 ## Setup
 
 1. **BotFather:** create the bot and keep the token.
 2. **Group:** it must be a supergroup. Add the bot as an administrator with: *Delete messages*,
-   *Ban/restrict users*, *Invite users via link*.
+   *Ban/restrict users*, *Invite users via link*, *manage tags*.
 3. **Supabase:** create a project. Under *Connect*, copy the **Session pooler** or
    **Transaction pooler** URI, not *Direct connection* (that one is IPv6-only and Render
    cannot reach it). The bot creates its own tables on startup.

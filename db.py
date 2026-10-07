@@ -135,6 +135,11 @@ class Store:
             AND created_at >= now() - %s * interval '1 hour'""",(chat_id,user_id,hours))
     async def mark_ads(self,ids):
         if ids: await self._execute("UPDATE messages SET is_ad=TRUE WHERE id = ANY(%s)",(list(ids),))
+    async def find_message(self,chat_id,message_id):
+        return await self._one("SELECT id,is_ad FROM messages WHERE chat_id=%s AND message_id=%s",(chat_id,message_id))
+    async def message_ids(self,chat_id,user_id):
+        return [r["message_id"] for r in await self._all(
+            "SELECT message_id FROM messages WHERE chat_id=%s AND user_id=%s",(chat_id,user_id))]
     async def text_posted_by_others(self,chat_id,user_id,text,hours):
         r=await self._one("""SELECT 1 AS x FROM messages WHERE chat_id=%s AND user_id<>%s AND text=%s
             AND created_at >= now() - %s * interval '1 hour' LIMIT 1""",(chat_id,user_id,text,hours))

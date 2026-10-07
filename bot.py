@@ -45,6 +45,9 @@ AD_LIMIT = 1
 VERIFIED_AD_LIMIT = 3  # she sent the admin a short verification video
 AD_WINDOW_HOURS = 24
 AD_REMINDER_EVERY_DAYS = 7  # at most one reminder a week
+# Telegram member tags: at most 16 characters, no emoji.
+VERIFIED_TAG = "verificată"
+UNVERIFIED_TAG = "neverificată"
 # Static and animated/video stickers are counted separately, 2 of each per day.
 STICKERS_PER_DAY = 2
 STICKER_WINDOW_HOURS = 24
@@ -142,6 +145,25 @@ def verification_offer(group_title):
 
 async def ad_limit(user_id):
     return VERIFIED_AD_LIMIT if await store.is_verified(GROUP_CHAT_ID, user_id) else AD_LIMIT
+
+
+async def set_tag(bot, user_id, tag, current=None):
+    """The tag shown next to her name in the group (Bot API 9.5, not wrapped by
+    python-telegram-bot 22.5). Needs the bot's "manage tags" right; a refusal is only logged."""
+    if current == tag:
+        return
+    try:
+        await bot.do_api_request("setChatMemberTag",
+                                 api_kwargs={"chat_id": GROUP_CHAT_ID, "user_id": user_id, "tag": tag})
+    except Exception as exc:
+        log.warning("Tag %r not set for %s: %s", tag, user_id, exc)
+
+
+async def tag_advertiser(bot, message):
+    """Whoever posts ads is tagged: unverified, or verified once an admin ran /verifica."""
+    user_id = message.from_user.id
+    tag = VERIFIED_TAG if await store.is_verified(GROUP_CHAT_ID, user_id) else UNVERIFIED_TAG
+    await set_tag(bot, user_id, tag, message.api_kwargs.get("sender_tag"))
 
 
 async def is_admin(bot, chat_id, user_id):
@@ -570,6 +592,8 @@ async def on_group_message(update, context):
         )
 
         is_ad = external_link_ad or text_ad
+        if is_ad:
+            await tag_advertiser(bot, message)
 
         if is_ad and not await handle_ad(bot, message):
             return
@@ -781,6 +805,7 @@ async def cmd_verify(update, context):
     if adding:
         await store.add_verified(GROUP_CHAT_ID, user_id, update.effective_user.id)
         await store.log_event(GROUP_CHAT_ID, user_id, "verify", f"de {update.effective_user.id}")
+        await set_tag(bot, user_id, VERIFIED_TAG)
         if update.effective_chat.type != "private":
             try:
                 await bot.delete_message(update.effective_chat.id, message.message_id)
@@ -792,6 +817,7 @@ async def cmd_verify(update, context):
         return
     if await store.remove_verified(GROUP_CHAT_ID, user_id):
         await store.log_event(GROUP_CHAT_ID, user_id, "unverify", f"de {update.effective_user.id}")
+        await set_tag(bot, user_id, UNVERIFIED_TAG)
         text = f"{name} nu mai e verificată: înapoi la {AD_LIMIT} reclame pe zi."
     else:
         text = f"{name} nu era verificată."
@@ -813,6 +839,7 @@ async def cmd_mark_ad(update, context):
         await admin_reply(update, bot, f"{name} e admin sau pe lista albă: limita de reclame nu i se aplică.")
         return
     async with _moderation_lock:
+        await tag_advertiser(bot, ad)
         saved = await store.find_message(GROUP_CHAT_ID, ad.message_id)
         if saved and saved["is_ad"]:
             text = "Mesajul era deja numărat ca reclamă."

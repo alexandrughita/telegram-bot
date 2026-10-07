@@ -44,6 +44,11 @@ bot's private chat.
 - Messages posted "as a channel" are deleted; anonymous admins and posts from the linked
   channel are left alone.
 
+**Member tags** (Telegram's tag next to her name; the bot needs the *manage tags* right)
+- Whoever posts an ad (caught by the bot or marked with `/reclama`) is tagged
+  **neverificată**; `/verifica` changes it to **verificată**, `/neverifica` back.
+  Admins cannot be tagged (Telegram tags regular members only). A refused tag is only logged.
+
 **Admin overrides**
 - `/reclama`, as a reply to a message the rules missed: it counts as her ad, exactly as if
   the bot had caught it. If she had no ads left it is deleted with the limit note.
@@ -107,7 +112,7 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
 
 1. **BotFather:** create the bot and keep the token.
 2. **Group:** it must be a supergroup. Add the bot as an administrator with: *Delete messages*,
-   *Ban/restrict users*, *Invite users via link*.
+   *Ban/restrict users*, *Invite users via link*, *manage tags*.
 3. **Supabase:** create a project. Under *Connect*, copy the **Session pooler** or
    **Transaction pooler** URI, not *Direct connection* (that one is IPv6-only and Render
    cannot reach it). The bot creates its own tables on startup.

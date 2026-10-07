@@ -37,6 +37,7 @@ class FakeBot:
         self.delete_message = AsyncMock()
         self.delete_messages = AsyncMock()
         self.ban_chat_member = AsyncMock()
+        self.do_api_request = AsyncMock(return_value=True)
         self.send_message = AsyncMock(return_value=SimpleNamespace(message_id=500))
         self.copy_message = AsyncMock(side_effect=lambda *a, **k: SimpleNamespace(message_id=501))
         self.get_chat = AsyncMock(return_value=SimpleNamespace(permissions=None))
@@ -817,6 +818,48 @@ def test_a_refused_delete_is_logged_as_such_and_support_told_once(env, run):
     assert events(env, run, 90) == ["delete_failed", "delete_failed"]
     alerts = [c for c in env.bot.send_message.call_args_list if c.args[0] == S]
     assert len(alerts) == 1 and "Delete messages" in alerts[0].args[1]
+
+
+# ---- member tags ----------------------------------------------------------
+def tags(env):
+    return [(c.kwargs["api_kwargs"]["user_id"], c.kwargs["api_kwargs"]["tag"])
+            for c in env.bot.do_api_request.call_args_list if c.args[0] == "setChatMemberTag"]
+
+
+def test_an_unverified_member_posting_an_ad_is_tagged(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Salut tuturor", mid=1)  # not an ad: no tag
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=2)
+    assert tags(env) == [(90, "neverificată")]
+
+
+def test_a_member_already_tagged_is_not_tagged_again(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, sender_tag="neverificată")
+    assert tags(env) == []
+
+
+def test_verifica_and_neverifica_set_the_tag(env, run):
+    posting_member(env, run, 90)
+    group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, sender_tag="verificată")
+    group_command(env, run, ADMIN_ID, "/neverifica 90", handler=bot.cmd_verify)
+    assert tags(env) == [(90, "verificată"), (90, "neverificată")]
+
+
+def test_reclama_tags_her(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, MISSED_AD, mid=29)
+    group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad)
+    assert tags(env) == [(90, "neverificată")]
+
+
+def test_a_refused_tag_does_not_stop_moderation(env, run):
+    posting_member(env, run, 90)
+    env.bot.do_api_request = AsyncMock(side_effect=bot.Forbidden("not enough rights to manage tags"))
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
+    message(env, run, 90, "Alt anunt, vezi https://example.com/2", mid=2)
+    assert member_deletions(env) == [2]
 
 
 # ---- /start menu --------------------------------------------------------

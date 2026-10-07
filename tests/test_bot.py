@@ -69,7 +69,7 @@ def run():
 def env(run, monkeypatch):
     store = Store(DSN)
     run(store.open())
-    run(store._execute("TRUNCATE members, invite_links, invites, messages, violations, support_threads, moderation_events, bot_posts, bot_state, whitelist, verified"))
+    run(store._execute("TRUNCATE members, invite_links, invites, messages, violations, support_threads, moderation_events, bot_posts, bot_state, whitelist, verified, learned_ads, ad_keywords"))
     bot.store = store
     bot._admin_cache.clear()
     bot._permissions_cache.clear()
@@ -618,13 +618,13 @@ def test_tick_endpoint_refuses_without_the_secret(monkeypatch):
 
 
 # ---- whitelist ------------------------------------------------------------
-def group_command(env, run, uid, text, reply_to_uid=None, handler=None):
+def group_command(env, run, uid, text, reply_to_uid=None, handler=None, reply_text="hei"):
     msg = {"message_id": 30, "date": 0, "from": user(uid), "text": text,
            "chat": {"id": G, "type": "supergroup"},
            "entities": [{"type": "bot_command", "offset": 0, "length": len(text.split()[0])}]}
     if reply_to_uid:
         msg["reply_to_message"] = {"message_id": 29, "date": 0, "from": user(reply_to_uid),
-                                   "chat": {"id": G, "type": "supergroup"}, "text": "hei"}
+                                   "chat": {"id": G, "type": "supergroup"}, "text": reply_text}
     upd = Update.de_json({"update_id": 6, "message": msg}, None)
     run((handler or bot.cmd_whitelist)(upd, SimpleNamespace(bot=env.bot, args=text.split()[1:])))
 
@@ -832,6 +832,27 @@ def test_custom_emoji_layout_counts_as_an_ad(env, run):
     emoji = [{"type": "custom_emoji", "offset": i, "length": 1, "custom_emoji_id": str(i)} for i in range(5)]
     message(env, run, 90, "abcde Hai la mine", mid=1, entities=emoji)
     message(env, run, 90, "Vezi https://example.com/1", mid=2)
+    assert member_deletions(env) == [2]
+
+
+def test_reclama_learns_the_ad_so_a_similar_one_from_anyone_counts(env, run):
+    for uid in (90, 91):
+        posting_member(env, run, uid)
+    message(env, run, 90, MISSED_AD, mid=29)
+    group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad, reply_text=MISSED_AD)
+    assert "Am învățat" in env.bot.send_message.call_args.args[1]
+    message(env, run, 91, "Fete noi in zona ta, astept mesajele tale", mid=40)  # first ad of hers
+    message(env, run, 91, "Alt anunt, vezi https://example.com/1", mid=41)
+    assert member_deletions(env) == [41]
+
+
+def test_reclama_words_become_keywords_with_or_without_a_reply(env, run):
+    posting_member(env, run, 91)
+    group_command(env, run, ADMIN_ID, "/reclama Video Call, cam", handler=bot.cmd_mark_ad)
+    assert "videocall" in env.bot.send_message.call_args.args[1]
+    assert run(env.store.ad_keywords(G)) == ["videocall"]  # "cam" is too short to be safe
+    message(env, run, 91, "Fac video-call seara", mid=1)
+    message(env, run, 91, "Și video call dimineața", mid=2)
     assert member_deletions(env) == [2]
 
 

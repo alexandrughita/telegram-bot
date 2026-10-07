@@ -19,8 +19,8 @@ from telegram.ext import (
 
 from db import Store
 from moderation import (
-    MIN_TEXT_LENGTH_EXACT, build_fingerprint, content_ad, duplicate_reason, has_external_link, illegal_content,
-    links_to_approape, same_ad_text, violation_action,
+    MIN_KEYWORD_LENGTH, MIN_TEXT_LENGTH_EXACT, build_fingerprint, compact_text, content_ad, duplicate_reason, has_external_link, illegal_content,
+    links_to_approape, normalize_text, same_ad_text, violation_action,
 )
 import posts
 
@@ -612,7 +612,8 @@ async def on_group_message(update, context):
 
         entities = (message.entities or ()) + (message.caption_entities or ())
         custom_emoji = sum(e.type == MessageEntity.CUSTOM_EMOJI for e in entities)
-        is_ad = external_link_ad or text_ad or content_ad(text, custom_emoji)
+        is_ad = external_link_ad or text_ad or content_ad(
+            text, custom_emoji, await store.ad_keywords(GROUP_CHAT_ID), await store.learned_ads(GROUP_CHAT_ID))
         if is_ad:
             await tag_advertiser(bot, message)
 
@@ -847,17 +848,32 @@ async def cmd_verify(update, context):
 
 async def cmd_mark_ad(update, context):
     """/reclama, as a reply: a message the rules missed is an ad. It counts toward her daily
-    limit as if the bot had caught it, so with no ads left it is deleted with the limit note."""
+    limit as if the bot had caught it, so with no ads left it is deleted with the limit note.
+    The bot learns from it for good: a similar text from anyone is an ad from then on, and
+    words after the command (comma-separated, with or without a reply) become keywords."""
     message, bot = update.effective_message, context.bot
-    if not await is_admin(bot, GROUP_CHAT_ID, update.effective_user.id):
+    admin_id = update.effective_user.id
+    if not await is_admin(bot, GROUP_CHAT_ID, admin_id):
         return
+    keywords = [k for k in (compact_text(p) for p in " ".join(context.args).split(","))
+                if len(k) >= MIN_KEYWORD_LENGTH]
+    for keyword in keywords:
+        await store.add_ad_keyword(GROUP_CHAT_ID, keyword, admin_id)
+    learned_words = f"\nCuvinte noi de reclamă: {', '.join(keywords)}." if keywords else ""
     ad = message.reply_to_message
     if not ad or not ad.from_user or ad.from_user.is_bot or ad.sender_chat:
-        await admin_reply(update, bot, "Dă reply cu /reclama la mesajul care e reclamă.")
+        await admin_reply(update, bot, learned_words.strip() if keywords else
+                          "Dă reply cu /reclama la mesajul care e reclamă, sau scrie după comandă "
+                          "cuvintele de reclamă, separate prin virgulă.")
         return
+    ad_text = normalize_text(ad.text or ad.caption or "")
+    if len(ad_text) >= MIN_TEXT_LENGTH_EXACT:
+        await store.add_learned_ad(GROUP_CHAT_ID, ad_text, admin_id)
+        learned_words += "\nAm învățat textul: mesajele asemănătoare, de la oricine, sunt reclame de acum."
     user, name = ad.from_user, ad.from_user.mention_html()
     if await is_admin(bot, GROUP_CHAT_ID, user.id) or await store.is_whitelisted(GROUP_CHAT_ID, user.id):
-        await admin_reply(update, bot, f"{name} e admin sau pe lista albă: limita de reclame nu i se aplică.")
+        await admin_reply(update, bot, f"{name} e admin sau pe lista albă: limita de reclame nu i se aplică."
+                          + learned_words)
         return
     async with _moderation_lock:
         await tag_advertiser(bot, ad)
@@ -874,7 +890,7 @@ async def cmd_mark_ad(update, context):
             await store.log_event(GROUP_CHAT_ID, user.id, "ad_marked", f"de {update.effective_user.id}", ad.message_id)
             count = await store.recent_ad_count(GROUP_CHAT_ID, user.id, AD_WINDOW_HOURS)
             text = f"📣 Numărat ca reclamă: {name} a folosit {count}/{await ad_limit(user.id)} reclame în ultimele 24h."
-    await admin_reply(update, bot, text)
+    await admin_reply(update, bot, text + learned_words)
 
 
 async def cmd_ban(update, context):

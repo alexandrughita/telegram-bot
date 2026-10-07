@@ -72,10 +72,16 @@ AD_CUSTOM_EMOJI = 5
 def compact_text(text):
     return re.sub(r"[^a-z0-9]","",plain_text(text))
 
-def content_ad(text,custom_emoji=0):
-    """An ad by its content: selling words, or a layout of custom emoji."""
+# A keyword an admin adds must be long enough not to hide inside ordinary words.
+MIN_KEYWORD_LENGTH = 4
+
+def content_ad(text,custom_emoji=0,keywords=(),learned=()):
+    """An ad by its content: selling words (built in, or added by an admin with /reclama),
+    a layout of custom emoji, or a text like an ad an admin marked with /reclama."""
     compact=compact_text(text)
-    return custom_emoji>=AD_CUSTOM_EMOJI or any(k in compact for k in AD_KEYWORDS)
+    if custom_emoji>=AD_CUSTOM_EMOJI or any(k in compact for k in (*AD_KEYWORDS,*keywords)): return True
+    normalized=normalize_text(text)
+    return any(same_ad_text(normalized,old) for old in learned)
 
 # Illegal content: the sender is banned and all her messages deleted. Whole words on the
 # text without diacritics; "minore" alone is left out ("probleme minore").

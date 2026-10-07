@@ -105,3 +105,10 @@ def test_an_age_under_18_goes_to_a_person():
 def test_lookalikes_are_not_illegal():
     for text in ("probleme minore, nimic grav", "torpedo", "am 23 de ani", "lucrez de 20 ani", "Pedagog"):
         assert illegal_content(text) is None, text
+
+
+def test_admin_keywords_and_learned_ads_count():
+    assert content_ad("Fac video-call seara", keywords=["videocall"])
+    learned = [normalize_text("Fete noi in zona ta, astept mesajul tau")]
+    assert content_ad("Fete noi în zona ta, aștept mesajele tale", learned=learned)
+    assert not content_ad("Bună seara tuturor, ce mai faceți?", keywords=["videocall"], learned=learned)

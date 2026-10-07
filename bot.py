@@ -639,7 +639,7 @@ async def on_group_message(update, context):
 async def on_private_message(update, context):
     message, user, bot = update.effective_message, update.effective_user, context.bot
     if not SUPPORT_CHAT_ID:
-        await message.reply_text("Momentan nu putem primi mesaje aici. Scrie-ne pe approape.ro.")
+        await message.reply_text("Momentan nu putem primi mesaje aici. Scrie-ne pe Telegram la @approape_ro.")
         return
     header = await bot.send_message(
         SUPPORT_CHAT_ID,

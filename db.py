@@ -148,6 +148,13 @@ class Store:
             ON CONFLICT DO NOTHING""",(chat_id,text,added_by))
     async def learned_ads(self,chat_id):
         return [r["text"] for r in await self._all("SELECT text FROM learned_ads WHERE chat_id=%s",(chat_id,))]
+    async def remove_learned_ads(self,chat_id,texts):
+        if texts: await self._execute("DELETE FROM learned_ads WHERE chat_id=%s AND text = ANY(%s)",(chat_id,list(texts)))
+    async def remove_ad_keyword(self,chat_id,keyword):
+        r=await self._one("DELETE FROM ad_keywords WHERE chat_id=%s AND keyword=%s RETURNING keyword",(chat_id,keyword))
+        return r is not None
+    async def unmark_ad(self,chat_id,message_id):
+        await self._execute("UPDATE messages SET is_ad=FALSE WHERE chat_id=%s AND message_id=%s",(chat_id,message_id))
     async def add_ad_keyword(self,chat_id,keyword,added_by):
         await self._execute("""INSERT INTO ad_keywords(chat_id,keyword,added_by) VALUES(%s,%s,%s)
             ON CONFLICT DO NOTHING""",(chat_id,keyword,added_by))

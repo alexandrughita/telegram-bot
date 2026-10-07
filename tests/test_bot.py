@@ -856,6 +856,35 @@ def test_reclama_words_become_keywords_with_or_without_a_reply(env, run):
     assert member_deletions(env) == [2]
 
 
+def test_nureclama_forgets_the_learned_text_and_uncounts_the_message(env, run):
+    for uid in (90, 91):
+        posting_member(env, run, uid)
+    message(env, run, 90, MISSED_AD, mid=29)
+    group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad, reply_text=MISSED_AD)
+    group_command(env, run, ADMIN_ID, "/nureclama", reply_to_uid=90, handler=bot.cmd_unmark_ad, reply_text=MISSED_AD)
+    assert "Texte uitate: 1" in env.bot.send_message.call_args.args[1]
+    assert run(env.store.learned_ads(G)) == []
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 0
+    message(env, run, 91, "Fete noi in zona ta, astept mesajele tale", mid=40)  # no longer an ad
+    message(env, run, 91, "Alt anunt, vezi https://example.com/1", mid=41)  # so this is her first
+    assert member_deletions(env) == []
+
+
+def test_nureclama_removes_keywords_and_lists_what_was_learned(env, run):
+    group_command(env, run, ADMIN_ID, "/reclama video call, cam show", handler=bot.cmd_mark_ad)
+    group_command(env, run, ADMIN_ID, "/nureclama Video Call, xyzw", handler=bot.cmd_unmark_ad)
+    answer = env.bot.send_message.call_args.args[1]
+    assert "Cuvânt șters: videocall" in answer and "„xyzw” nu era" in answer
+    group_command(env, run, ADMIN_ID, "/nureclama", handler=bot.cmd_unmark_ad)
+    assert "Cuvinte învățate: camshow" in env.bot.send_message.call_args.args[1]
+
+
+def test_only_admins_can_unlearn(env, run):
+    group_command(env, run, ADMIN_ID, "/reclama video call", handler=bot.cmd_mark_ad)
+    group_command(env, run, 91, "/nureclama video call", handler=bot.cmd_unmark_ad)
+    assert run(env.store.ad_keywords(G)) == ["videocall"]
+
+
 def test_illegal_content_bans_her_and_deletes_everything(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Salut tuturor", mid=1)

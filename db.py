@@ -150,7 +150,7 @@ class Store:
             AND created_at >= now() - %s * interval '1 hour' ORDER BY created_at ASC LIMIT 1""",(chat_id,user_id,hours))
     async def ad_limit_users(self,chat_id,days):
         return await self._all("""SELECT user_id FROM moderation_events
-            WHERE chat_id=%s AND event_type='delete' AND reason LIKE 'reclame: limita 2/24h%%'
+            WHERE chat_id=%s AND event_type='delete' AND reason LIKE 'reclame: limita %%'
             AND created_at >= now() - %s * interval '1 day'
             GROUP BY user_id""",(chat_id,days))
     async def save_message(self,chat_id,user_id,message_id,fp,is_gif,is_sticker=False,is_static_sticker=False,is_ad=False):

@@ -245,14 +245,13 @@ def test_gifs_are_not_limited(env, run):
 AD = "Acesta este un anunt suficient de lung"
 
 
-def test_the_same_text_is_allowed_twice_a_day_counting_the_first(env, run):
+def test_the_same_text_posted_again_the_same_day_is_deleted(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, AD, mid=1)
     message(env, run, 90, AD, mid=2)
-    assert run(env.store.recent_ad_count(G, 90, 24)) == 2
-    message(env, run, 90, AD, mid=3)
-    env.bot.delete_message.assert_awaited_once_with(G, 3)
-    assert "limita de 2 reclame" in last_text(env)
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 1
+    env.bot.delete_message.assert_awaited_once_with(G, 2)
+    assert "limita de 1 reclamă" in last_text(env)
     assert "Poți posta din nou" in last_text(env)
     assert run(env.store._one("SELECT COUNT(*) AS n FROM violations"))["n"] == 0
 
@@ -263,17 +262,14 @@ def test_the_same_text_hours_apart_still_counts(env, run):
     message(env, run, 90, AD, mid=1)
     run(env.store._execute("UPDATE messages SET created_at = now() - interval '7 hours'"))
     message(env, run, 90, AD, mid=2)
-    run(env.store._execute("UPDATE messages SET created_at = now() - interval '7 hours' WHERE message_id = 2"))
-    message(env, run, 90, AD, mid=3)
-    env.bot.delete_message.assert_awaited_once_with(G, 3)
+    env.bot.delete_message.assert_awaited_once_with(G, 2)
 
 
 def test_the_same_text_is_allowed_again_after_a_day(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, AD, mid=1)
-    message(env, run, 90, AD, mid=2)
     run(env.store._execute("UPDATE messages SET created_at = now() - interval '25 hours'"))
-    message(env, run, 90, AD, mid=3)
+    message(env, run, 90, AD, mid=2)
     env.bot.delete_message.assert_not_awaited()
 
 
@@ -281,11 +277,10 @@ def test_reworded_copies_are_the_same_ad(env, run):
     # Real variants one member posted on 2026-10-05; only exact copies counted then.
     posting_member(env, run, 90)
     message(env, run, 90, "Doamne/domnișoare nesatisfăcute, aștept mesaj în privat", mid=1)
-    message(env, run, 90, "Doamne/domnișoare nesatisfăcute din Brașov, pm me", mid=2)
     run(env.store._execute("UPDATE messages SET created_at = now() - interval '10 hours'"))
-    message(env, run, 90, "Doamne/domnișoare nesatisfăcute pm me", mid=3)
-    env.bot.delete_message.assert_awaited_once_with(G, 3)
-    assert "limita de 2 reclame" in last_text(env)
+    message(env, run, 90, "Doamne/domnișoare nesatisfăcute pm me", mid=2)
+    env.bot.delete_message.assert_awaited_once_with(G, 2)
+    assert "limita de 1 reclamă" in last_text(env)
     assert run(env.store._one("SELECT COUNT(*) AS n FROM violations"))["n"] == 0
 
 
@@ -293,7 +288,7 @@ def test_a_font_swap_is_the_same_text(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "𝐃𝐢𝐬𝐩𝐨𝐧𝐢𝐛𝐢𝐥𝐚 𝐩𝐞𝐧𝐭𝐫𝐮 videocall și sexting", mid=1)
     message(env, run, 90, "Disponibila pentru videocall și sexting", mid=2)
-    assert run(env.store.recent_ad_count(G, 90, 24)) == 2
+    env.bot.delete_message.assert_awaited_once_with(G, 2)
 
 
 def test_different_messages_from_one_member_are_not_ads(env, run):
@@ -434,12 +429,10 @@ def test_forwarded_repeats_hit_the_ad_limit(env, run):
     posting_member(env, run, 91)
     message(env, run, 90, AD, mid=1)
     message(env, run, 90, "Alt anunt la fel de lung ca primul", mid=2)
-    message(env, run, 90, "Al treilea anunt, tot destul de lung", mid=3)
-    run(bot.on_group_message(forwarded(91, 4, AD), env.ctx))
-    run(bot.on_group_message(forwarded(91, 5, "Alt anunt la fel de lung ca primul"), env.ctx))
-    run(bot.on_group_message(forwarded(91, 6, "Al treilea anunt, tot destul de lung"), env.ctx))
-    env.bot.delete_message.assert_awaited_once_with(G, 6)
-    assert "limita de 2 reclame" in last_text(env)
+    run(bot.on_group_message(forwarded(91, 3, AD), env.ctx))
+    run(bot.on_group_message(forwarded(91, 4, "Alt anunt la fel de lung ca primul"), env.ctx))
+    env.bot.delete_message.assert_awaited_once_with(G, 4)
+    assert "limita de 1 reclamă" in last_text(env)
 
 
 def test_forwarding_text_seen_more_than_a_day_ago_is_not_an_ad(env, run):
@@ -652,9 +645,9 @@ def test_whitelisted_member_skips_every_rule(env, run):
 def test_unwhitelist_brings_the_rules_back(env, run):
     group_command(env, run, ADMIN_ID, "/whitelist 90")
     group_command(env, run, ADMIN_ID, "/unwhitelist", reply_to_uid=90)
-    for mid in (1, 2, 3):
+    for mid in (1, 2):
         message(env, run, 90, AD, mid=mid)
-    assert member_deletions(env) == [3]
+    assert member_deletions(env) == [2]
     assert events(env, run, 90)[:2] == ["whitelist", "unwhitelist"]
 
 
@@ -676,25 +669,37 @@ def test_whitelisted_private_status(env, run):
     assert "lista albă" in env.bot.send_message.call_args.kwargs["text"]
 
 
-# ---- verified: 4 ads a day ------------------------------------------------
-def test_verified_member_may_post_four_ads_a_day(env, run):
+# ---- verified: 3 ads a day ------------------------------------------------
+def test_verified_member_may_post_three_ads_a_day(env, run):
     posting_member(env, run, 90)
     group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
     assert run(env.store.is_verified(G, 90))
-    for mid in range(1, 6):
+    for mid in range(1, 5):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
-    assert member_deletions(env) == [5]
-    assert "limita de 4 reclame" in last_text(env)
+    assert member_deletions(env) == [4]
+    assert "limita de 3 reclame" in last_text(env)
+    assert "video" not in last_text(env)  # already verified: nothing to offer
     assert events(env, run, 90)[0] == "verify"
 
 
-def test_neverifica_brings_back_two_ads_a_day(env, run):
+def test_unverified_member_hitting_the_limit_is_told_how_to_get_verified(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
+    message(env, run, 90, "Alt anunt, vezi https://example.com/2", mid=2)
+    assert member_deletions(env) == [2]
+    notice = last_text(env)
+    for part in ("verificate pot posta 3 reclame", "video", "numele grupului", "username-ul tău",
+                 "@admin", "încrederea"):
+        assert part in notice, part
+
+
+def test_neverifica_brings_back_one_ad_a_day(env, run):
     posting_member(env, run, 90)
     group_command(env, run, ADMIN_ID, "/verifica 90", handler=bot.cmd_verify)
     group_command(env, run, ADMIN_ID, "/neverifica", reply_to_uid=90, handler=bot.cmd_verify)
-    for mid in (1, 2, 3):
+    for mid in (1, 2):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
-    assert member_deletions(env) == [3]
+    assert member_deletions(env) == [2]
 
 
 def test_verifica_announces_her_in_the_group_for_good(env, run):
@@ -781,7 +786,7 @@ def test_info_shows_her_ads_and_invites(env, run):
     message(env, run, 90, AD, mid=2)
     group_command(env, run, ADMIN_ID, "/info", reply_to_uid=90, handler=bot.cmd_info)
     text = last_text(env)
-    for part in ("A adus: 0", "Reclame (24h): 2/2", "Stickere (24h): statice 0/2 · animate 0/2",
+    for part in ("A adus: 0", "Reclame (24h): 1/1", "Stickere (24h): statice 0/2 · animate 0/2",
                  "Abateri (48h): 0 → următoarea: ștergere"):
         assert part in text, part
 
@@ -794,12 +799,12 @@ def test_info_says_she_can_post(env, run):
 
 def test_info_says_when_ads_are_allowed_again_and_lists_the_block(env, run):
     posting_member(env, run, 92)
-    for mid in (1, 2, 3):
+    for mid in (1, 2):
         message(env, run, 92, AD, mid=mid)
     group_command(env, run, ADMIN_ID, "/info", reply_to_uid=92, handler=bot.cmd_info)
     text = last_text(env)
     assert "⛔ Limita de reclame atinsă: mesaje normale da, reclame din nou" in text
-    assert "Ultimele acțiuni:" in text and "șters: reclame: limita 2/24h" in text
+    assert "Ultimele acțiuni:" in text and "șters: reclame: limita 1/24h" in text
 
 
 def test_info_shows_a_mute_with_its_end(env, run):
@@ -822,9 +827,9 @@ def test_info_and_unlock_are_admin_only(env, run):
 def test_unlock_lifts_a_mute_but_keeps_the_other_rules(env, run):
     group_command(env, run, ADMIN_ID, "/unlock 91", handler=bot.cmd_unlock)
     assert env.bot.posting_unlocked(91)
-    for mid in (1, 2, 3):
+    for mid in (1, 2):
         message(env, run, 91, AD, mid=mid)
-    assert member_deletions(env) == [3]
+    assert member_deletions(env) == [2]
     assert events(env, run, 91) == ["unlock", "delete"]
 
 
@@ -839,7 +844,7 @@ def test_health_reports_the_live_commit(monkeypatch):
 def hit_ad_limit(env, run, uid, hours_ago, ads_still_in_window):
     """She was blocked hours_ago; ads_still_in_window of her ads are under 24h old."""
     now = datetime.now(timezone.utc)
-    run(env.store.log_event(G, uid, "delete", "reclame: limita 2/24h"))
+    run(env.store.log_event(G, uid, "delete", "reclame: limita 1/24h"))
     run(env.store.set_time(f"ad_limit:{G}:{uid}", now - timedelta(hours=hours_ago)))
     run(env.store._execute("DELETE FROM messages WHERE user_id=%s", (uid,)))
     for n in range(ads_still_in_window):
@@ -853,11 +858,11 @@ def reminders_sent(env, uid):
 
 
 def test_ad_reminder_waits_until_the_limit_lifts(env, run):
-    hit_ad_limit(env, run, 50, hours_ago=1, ads_still_in_window=2)
+    hit_ad_limit(env, run, 50, hours_ago=1, ads_still_in_window=1)
     run(bot.run_ad_reminders(env.bot))
     assert reminders_sent(env, 50) == 0
 
-    hit_ad_limit(env, run, 50, hours_ago=20, ads_still_in_window=1)
+    hit_ad_limit(env, run, 50, hours_ago=20, ads_still_in_window=0)
     run(bot.run_ad_reminders(env.bot))
     assert reminders_sent(env, 50) == 1
 

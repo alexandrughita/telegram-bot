@@ -22,13 +22,15 @@ bot's private chat.
 **Moderation** (for everyone except the group's admins, read live from Telegram)
 - A message containing a link to **approape.ro** (or a subdomain, including a link hidden
   behind text) is exempt from every rule below.
-- **Ads: at most 2 per 24 hours.** An ad is a message with a link outside approape.ro, or
+- **Ads: at most 1 per 24 hours, 3 for members an admin verified with `/verifica`.** An ad is a message with a link outside approape.ro, or
   the same text (≥ 15 characters after normalising) posted again within 24 hours, or a
   reworded copy of it (≥ 25 characters, ~75% alike; "fancy font" letters count as plain
-  ones) — every copy counts, the first one included, so the same text can appear twice a day. A
+  ones) — every copy counts, the first one included, so a repeated text is deleted the second time. A
   **forward** whose text (≥ 15 characters) anyone in the group posted in the last 24 hours
-  is an ad for whoever forwarded it; forwarded stickers follow the sticker limit. The third
-  is deleted with a note saying when she can post again and asking for real messages
+  is an ad for whoever forwarded it; forwarded stickers follow the sticker limit. The next
+  one is deleted with a note saying when she can post again — for an unverified member it
+  also explains verification (a short video saying the group's name and her username, sent
+  to an admin privately or in the group with @admin; it raises clients' trust too) — and asking for real messages
   (a question, a recommendation, an experience) instead; it is not a violation. A week
   after she hit the limit she gets a private reminder that she can post again.
 - Other repeats within 6 hours are violations: the same photo/clip, the same link

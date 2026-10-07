@@ -30,7 +30,7 @@ bot's private chat.
   is an ad for whoever forwarded it; forwarded stickers follow the sticker limit. The next
   one is deleted with a note saying when she can post again — for an unverified member it
   also explains verification (a short video saying the group's name and her username, sent
-  to an admin privately or in the group with @admin; it raises clients' trust too) — and asking for real messages
+  to @approape_ro privately or in the group with @admin; it raises clients' trust too) — and asking for real messages
   (a question, a recommendation, an experience) instead; it is not a violation. A week
   after she hit the limit she gets a private reminder that she can post again.
 - Other repeats within 6 hours are violations: the same photo/clip, the same link

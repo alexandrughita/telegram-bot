@@ -41,8 +41,8 @@ PORT = int(os.environ.get("PORT", "10000"))
 WELCOME_TTL_SECONDS = 180
 NOTICE_TTL_SECONDS = 60
 CACHE_TTL_SECONDS = 300
-AD_LIMIT = 2
-VERIFIED_AD_LIMIT = 4  # she sent the admin a short verification video
+AD_LIMIT = 1
+VERIFIED_AD_LIMIT = 3  # she sent the admin a short verification video
 AD_WINDOW_HOURS = 24
 AD_REMINDER_EVERY_DAYS = 7  # at most one reminder a week
 # Static and animated/video stickers are counted separately, 2 of each per day.
@@ -101,6 +101,18 @@ async def send_temporary(bot, chat_id, text, seconds, **kwargs):
         spawn(delete_later(bot, chat_id, sent.message_id, seconds))
     except Exception as exc:
         log.warning("Could not send notice: %s", exc)
+
+
+def ads_word(n):
+    return "reclamă" if n == 1 else "reclame"
+
+
+def verification_offer(group_title):
+    """How an unverified member earns VERIFIED_AD_LIMIT: the admin then runs /verifica."""
+    group = html.escape(group_title or "grupului")
+    return (f"🎥 Fetele verificate pot posta {VERIFIED_AD_LIMIT} reclame pe zi. Trimite un video scurt "
+            f"în care spui numele grupului (<b>{group}</b>) și username-ul tău, unui admin în privat "
+            f"sau aici în grup cu @admin. Verificarea îți crește și încrederea clienților.")
 
 
 async def ad_limit(user_id):
@@ -218,9 +230,10 @@ async def invite_status(update, context):
         await update.effective_message.reply_text("Nu pot crea linkul acum. Încearcă din nou mai târziu.")
         return
     count = await store.invite_count(GROUP_CHAT_ID, user.id)
+    limit = await ad_limit(user.id)
     await update.effective_message.reply_text(
         f"✅ Poți posta în grup.\n\n"
-        f"Reguli: cel mult {await ad_limit(user.id)} reclame în 24 de ore (linkuri externe sau același text repetat), "
+        f"Reguli: cel mult {limit} {ads_word(limit)} în 24 de ore (linkuri externe sau același text repetat), "
         f"{STICKERS_PER_DAY} stickere pe zi și fără aceeași poză, link sau număr repostat.\n\n"
         f"Vrei să aduci pe cineva? 🔗 Linkul tău:\n{link}\n👥 Ai adus: {count}",
         disable_web_page_preview=True,
@@ -441,12 +454,11 @@ async def handle_ad(bot, message):
             message.message_id,
         )
         await store.set_time(f"ad_limit:{GROUP_CHAT_ID}:{user.id}", datetime.now(timezone.utc))
-        await send_temporary(
-            bot, GROUP_CHAT_ID,
-            f"⛔ {user.mention_html()}, ai atins limita de {limit} reclame pe zi. "
-            f"Poți posta din nou {friendly_when(retry, datetime.now(timezone.utc))}.",
-            NOTICE_TTL_SECONDS,
-        )
+        notice = (f"⛔ {user.mention_html()}, ai atins limita de {limit} {ads_word(limit)} pe zi. "
+                  f"Poți posta din nou {friendly_when(retry, datetime.now(timezone.utc))}.")
+        if limit < VERIFIED_AD_LIMIT:
+            notice += "\n\n" + verification_offer(message.chat.title)
+        await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS)
         return False
 
     return True

@@ -920,28 +920,28 @@ def test_an_unverified_member_posting_an_ad_is_tagged(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Salut tuturor", mid=1)  # not an ad: no tag
     message(env, run, 90, "Anunt, vezi https://example.com/1", mid=2)
-    assert tags(env) == [(90, "neverificată")]
+    assert tags(env) == [(90, "Reclamă neverif.")]
 
 
 def test_a_member_already_tagged_is_not_tagged_again(env, run):
     posting_member(env, run, 90)
-    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, sender_tag="neverificată")
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, sender_tag="Reclamă neverif.")
     assert tags(env) == []
 
 
 def test_verifica_and_neverifica_set_the_tag(env, run):
     posting_member(env, run, 90)
     group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
-    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, sender_tag="verificată")
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, sender_tag="Verificată")
     group_command(env, run, ADMIN_ID, "/neverifica 90", handler=bot.cmd_verify)
-    assert tags(env) == [(90, "verificată"), (90, "neverificată")]
+    assert tags(env) == [(90, "Verificată"), (90, "Reclamă neverif.")]
 
 
 def test_reclama_tags_her(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, MISSED_AD, mid=29)
     group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad)
-    assert tags(env) == [(90, "neverificată")]
+    assert tags(env) == [(90, "Reclamă neverif.")]
 
 
 def test_a_refused_tag_does_not_stop_moderation(env, run):
@@ -1136,3 +1136,21 @@ def test_retry_time_is_said_in_words():
     assert bot.friendly_when(datetime(2026, 10, 7, 9, 10, tzinfo=tz), now) == "mâine dimineață după 09:10"
     assert bot.friendly_when(datetime(2026, 10, 7, 13, 0, tzinfo=tz), now) == "mâine după 13:00"
     assert bot.friendly_when(datetime(2026, 10, 7, 17, 0, tzinfo=tz), now) == "mâine seară după 17:00"
+
+
+def test_verifica_takes_a_list_of_usernames(env, run):
+    for uid, name in ((90, "ana"), (91, "Maria")):
+        message(env, run, uid, "Salut", mid=uid, username=name)
+    group_command(env, run, ADMIN_ID, "/verifica @Ana, @maria @necunoscuta", handler=bot.cmd_verify)
+    assert run(env.store.is_verified(G, 90)) and run(env.store.is_verified(G, 91))
+    assert tags(env) == [(90, "Verificată"), (91, "Verificată")]
+    assert any("au fost verificate" in str(c.args[1]) for c in env.bot.send_message.call_args_list
+               if c.args[0] == G)
+    assert "@necunoscuta" in last_text(env)
+
+
+def test_a_changed_username_is_found(env, run):
+    message(env, run, 90, "Salut", mid=1, username="vechi")
+    message(env, run, 90, "Salut iar", mid=2, username="nou")
+    group_command(env, run, ADMIN_ID, "/verifica @nou", handler=bot.cmd_verify)
+    assert run(env.store.is_verified(G, 90))

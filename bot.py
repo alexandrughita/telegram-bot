@@ -46,8 +46,8 @@ VERIFIED_AD_LIMIT = 3  # she sent the admin a short verification video
 AD_WINDOW_HOURS = 24
 AD_REMINDER_EVERY_DAYS = 7  # at most one reminder a week
 # Telegram member tags: at most 16 characters, no emoji.
-VERIFIED_TAG = "verificată"
-UNVERIFIED_TAG = "neverificată"
+VERIFIED_TAG = "Verificată"
+UNVERIFIED_TAG = "Reclamă neverif."
 # Static and animated/video stickers are counted separately, 2 of each per day.
 STICKERS_PER_DAY = 2
 STICKER_WINDOW_HOURS = 24
@@ -579,6 +579,8 @@ async def on_group_message(update, context):
                 user,
                 unlocked=True,
             )
+        elif member["username"] != user.username:  # kept current for /verifica @username
+            member = await store.add_member(GROUP_CHAT_ID, user)
 
         if sticker and await store.recent_sticker_count(
                 GROUP_CHAT_ID, user.id, STICKER_WINDOW_HOURS, static=is_static_sticker) >= STICKERS_PER_DAY:
@@ -808,42 +810,74 @@ async def cmd_whitelist(update, context):
     await admin_reply(update, bot, text)
 
 
+async def verify_targets(message, args):
+    """/verifica's members: the one replied to, plus each id, @username or picked mention
+    after the command. A @username is found only for members the bot has seen in the group;
+    those it does not know are returned apart."""
+    targets, unknown = {}, []
+    user_id, name = target_user(message, [])
+    if user_id is not None:
+        targets[user_id] = name
+    for entity in message.entities:
+        if entity.type == MessageEntity.TEXT_MENTION and entity.user:
+            targets[entity.user.id] = entity.user.mention_html()
+    for arg in (a.strip(",;") for a in args):
+        if arg.lstrip("-").isdigit():
+            known = await store.get_member(GROUP_CHAT_ID, int(arg))
+            targets[int(arg)] = html.escape(known["first_name"]) if known and known["first_name"] else f"id {arg}"
+        elif arg.startswith("@") and len(arg) > 1:
+            known = await store.member_by_username(GROUP_CHAT_ID, arg[1:])
+            if known:
+                targets[known["user_id"]] = html.escape(arg)
+            else:
+                unknown.append(html.escape(arg))
+    return list(targets.items()), unknown
+
+
 async def cmd_verify(update, context):
-    """/verifica marks a member who sent the admin a verification video: she may post
+    """/verifica marks members who sent the admin a verification video: they may post
     VERIFIED_AD_LIMIT ads a day instead of AD_LIMIT, and the group is told, permanently.
-    /neverifica takes it back, answered only to the admin."""
+    /neverifica takes it back, answered only to the admin. Both take a reply, or a list
+    of @usernames, ids or mentions."""
     message, bot = update.effective_message, context.bot
     if not await is_admin(bot, GROUP_CHAT_ID, update.effective_user.id):
         return
-    user_id, name = target_user(message, context.args)
+    targets, unknown = await verify_targets(message, context.args)
     adding = message.text.split()[0].split("@")[0].lower() == "/verifica"
-    if user_id is None:
-        await admin_reply(update, bot, "Dă reply la un mesaj al ei cu /verifica, sau scrie id-ul ei după comandă.")
+    missing = (f"\nNu le cunosc pe {', '.join(unknown)}: n-au scris încă în grup. "
+               "Dă reply la un mesaj al ei sau folosește id-ul.") if unknown else ""
+    if not targets:
+        await admin_reply(update, bot, "Dă reply la un mesaj al ei cu /verifica, sau scrie după comandă "
+                                       "@username-urile sau id-urile, separate prin spațiu." + missing)
         return
-    if name.startswith("id "):
-        known = await store.get_member(GROUP_CHAT_ID, user_id)
-        if known and known["first_name"]:
-            name = html.escape(known["first_name"])
+    names = ", ".join(name for _, name in targets)
     if adding:
-        await store.add_verified(GROUP_CHAT_ID, user_id, update.effective_user.id)
-        await store.log_event(GROUP_CHAT_ID, user_id, "verify", f"de {update.effective_user.id}")
-        await set_tag(bot, user_id, VERIFIED_TAG)
-        if update.effective_chat.type != "private":
+        for user_id, _ in targets:
+            await store.add_verified(GROUP_CHAT_ID, user_id, update.effective_user.id)
+            await store.log_event(GROUP_CHAT_ID, user_id, "verify", f"de {update.effective_user.id}")
+            await set_tag(bot, user_id, VERIFIED_TAG)
+        if update.effective_chat.type != "private" and not missing:
             try:
                 await bot.delete_message(update.effective_chat.id, message.message_id)
             except Exception as exc:
                 log.warning("Admin command not deleted from the group: %s", exc)
-        await bot.send_message(GROUP_CHAT_ID, f"🎥 {name} a fost verificată.", parse_mode="HTML")
+        verb = "a fost verificată" if len(targets) == 1 else "au fost verificate"
+        await bot.send_message(GROUP_CHAT_ID, f"🎥 {names} {verb}.", parse_mode="HTML")
         if update.effective_chat.type == "private":
-            await message.reply_text(f"Gata, {name} poate posta {VERIFIED_AD_LIMIT} reclame pe zi.", parse_mode="HTML")
+            await message.reply_text(f"Gata, {names} {'poate' if len(targets) == 1 else 'pot'} posta "
+                                     f"{VERIFIED_AD_LIMIT} reclame pe zi.{missing}", parse_mode="HTML")
+        elif missing:
+            await admin_reply(update, bot, missing.strip())
         return
-    if await store.remove_verified(GROUP_CHAT_ID, user_id):
-        await store.log_event(GROUP_CHAT_ID, user_id, "unverify", f"de {update.effective_user.id}")
-        await set_tag(bot, user_id, UNVERIFIED_TAG)
-        text = f"{name} nu mai e verificată: înapoi la {AD_LIMIT} reclame pe zi."
-    else:
-        text = f"{name} nu era verificată."
-    await admin_reply(update, bot, text)
+    lines = []
+    for user_id, name in targets:
+        if await store.remove_verified(GROUP_CHAT_ID, user_id):
+            await store.log_event(GROUP_CHAT_ID, user_id, "unverify", f"de {update.effective_user.id}")
+            await set_tag(bot, user_id, UNVERIFIED_TAG)
+            lines.append(f"{name} nu mai e verificată: înapoi la {AD_LIMIT} reclame pe zi.")
+        else:
+            lines.append(f"{name} nu era verificată.")
+    await admin_reply(update, bot, "\n".join(lines) + missing)
 
 
 async def cmd_mark_ad(update, context):

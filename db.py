@@ -102,6 +102,8 @@ class Store:
             ON CONFLICT(chat_id,user_id) DO UPDATE SET username=EXCLUDED.username,first_name=EXCLUDED.first_name""",
             (chat_id,user.id,user.username,user.first_name,unlocked,legacy))
         return await self.get_member(chat_id,user.id)
+    async def member_by_username(self, chat_id, username):
+        return await self._one("SELECT * FROM members WHERE chat_id=%s AND lower(username)=lower(%s)", (chat_id,username))
     async def set_unlocked(self, chat_id,user_id):
         await self._execute("UPDATE members SET unlocked=TRUE WHERE chat_id=%s AND user_id=%s",(chat_id,user_id))
 

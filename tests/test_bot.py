@@ -686,6 +686,17 @@ def test_verified_member_may_post_three_ads_a_day(env, run):
     assert events(env, run, 90)[0] == "verify"
 
 
+def test_only_the_last_allowed_ad_gets_an_accepted_reply(env, run):
+    posting_member(env, run, 90)
+    group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
+    env.bot.send_message.reset_mock()
+    for mid in range(1, 3):
+        message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
+    assert not env.bot.send_message.called  # 1/3 and 2/3: no reply
+    message(env, run, 90, "Anunt numarul 3, vezi https://example.com/3", mid=3)
+    assert "reclama a fost acceptată. Ai folosit toate anunțurile acceptate azi." in last_text(env)
+
+
 def test_unverified_member_hitting_the_limit_is_told_how_to_get_verified(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)

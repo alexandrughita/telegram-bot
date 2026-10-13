@@ -648,13 +648,14 @@ async def on_group_message(update, context):
                 user.id,
                 AD_WINDOW_HOURS,
             )
-            await send_temporary(
-                bot,
-                GROUP_CHAT_ID,
-                f"📣 {user.mention_html()}, reclama a fost acceptată. "
-                f"Ai folosit {new_count}/{await ad_limit(user.id)} reclame în ultimele 24h.",
-                NOTICE_TTL_SECONDS,
-            )
+            if new_count >= await ad_limit(user.id):  # only the last allowed ad gets a reply
+                await send_temporary(
+                    bot,
+                    GROUP_CHAT_ID,
+                    f"📣 {user.mention_html()}, reclama a fost acceptată. "
+                    f"Ai folosit toate anunțurile acceptate azi.",
+                    NOTICE_TTL_SECONDS,
+                )
 
         await maybe_cleanup()
 

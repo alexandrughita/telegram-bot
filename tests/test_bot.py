@@ -681,8 +681,9 @@ def test_verified_member_may_post_three_ads_a_day(env, run):
     for mid in range(1, 5):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
     assert member_deletions(env) == [4]
-    assert "limita de 3 reclame" in last_text(env)
+    assert "ai atins limita de anunțuri pe zi" in last_text(env)
     assert "video" not in last_text(env)  # already verified: nothing to offer
+    assert bot.REAL_MESSAGES_NOTE in last_text(env)
     assert events(env, run, 90)[0] == "verify"
 
 
@@ -937,6 +938,14 @@ def test_an_unverified_member_posting_an_ad_is_tagged(env, run):
 def test_a_member_already_tagged_is_not_tagged_again(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, sender_tag="Reclamă neverif.")
+    assert tags(env) == []
+
+
+def test_a_top_girl_posts_without_limit_and_keeps_her_tag(env, run):
+    posting_member(env, run, 90)
+    for mid in range(1, 6):
+        message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid, sender_tag="Top Girl")
+    assert member_deletions(env) == []
     assert tags(env) == []
 
 

@@ -48,6 +48,8 @@ AD_REMINDER_EVERY_DAYS = 7  # at most one reminder a week
 # Telegram member tags: at most 16 characters, no emoji.
 VERIFIED_TAG = "Verificată"
 UNVERIFIED_TAG = "Reclamă neverif."
+# Set by hand by an admin in Telegram; she may post as much as she likes, like the whitelist.
+TOP_GIRL_TAG = "Top Girl"
 # Static and animated/video stickers are counted separately, 2 of each per day.
 STICKERS_PER_DAY = 2
 STICKER_WINDOW_HOURS = 24
@@ -158,6 +160,10 @@ async def set_tag(bot, user_id, tag, current=None):
                                  api_kwargs={"chat_id": GROUP_CHAT_ID, "user_id": user_id, "tag": tag})
     except Exception as exc:
         log.warning("Tag %r not set for %s: %s", tag, user_id, exc)
+
+
+def is_top_girl(message):
+    return (message.api_kwargs.get("sender_tag") or "").strip().casefold() == TOP_GIRL_TAG.casefold()
 
 
 async def tag_advertiser(bot, message):
@@ -494,10 +500,13 @@ async def handle_ad(bot, message):
         if await delete_member_message(bot, message, user.id, reason):
             await store.log_event(GROUP_CHAT_ID, user.id, "delete", reason, message.message_id)
         await store.set_time(f"ad_limit:{GROUP_CHAT_ID}:{user.id}", datetime.now(timezone.utc))
-        notice = (f"⛔ {user.mention_html()}, ai atins limita de {limit} {ads_word(limit)} pe zi. "
-                  f"Poți posta din nou {friendly_when(retry, datetime.now(timezone.utc))}.")
+        again = f"Poți posta din nou {friendly_when(retry, datetime.now(timezone.utc))}."
         if limit < VERIFIED_AD_LIMIT:
-            notice += "\n\n" + verification_offer(message.chat.title)
+            notice = (f"⛔ {user.mention_html()}, ai atins limita de {limit} {ads_word(limit)} pe zi. {again}"
+                      f"\n\n" + verification_offer(message.chat.title))
+        else:
+            notice = (f"⛔ {user.mention_html()}, ai atins limita de anunțuri pe zi. {again}"
+                      f"\n\n{REAL_MESSAGES_NOTE}")
         await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS)
         return False
 
@@ -558,7 +567,7 @@ async def on_group_message(update, context):
                                  f"Dacă e ilegal: /ban {user.id} (în privat la bot)")
         return
 
-    if await store.is_whitelisted(GROUP_CHAT_ID, user.id):
+    if await store.is_whitelisted(GROUP_CHAT_ID, user.id) or is_top_girl(message):
         return
 
     fp = fingerprint_of(message)
@@ -907,8 +916,9 @@ async def cmd_mark_ad(update, context):
         await store.add_learned_ad(GROUP_CHAT_ID, ad_text, admin_id)
         learned_words += "\nAm învățat textul: mesajele asemănătoare, de la oricine, sunt reclame de acum."
     user, name = ad.from_user, ad.from_user.mention_html()
-    if await is_admin(bot, GROUP_CHAT_ID, user.id) or await store.is_whitelisted(GROUP_CHAT_ID, user.id):
-        await admin_reply(update, bot, f"{name} e admin sau pe lista albă: limita de reclame nu i se aplică."
+    if (await is_admin(bot, GROUP_CHAT_ID, user.id) or await store.is_whitelisted(GROUP_CHAT_ID, user.id)
+            or is_top_girl(ad)):
+        await admin_reply(update, bot, f"{name} e admin, pe lista albă sau Top Girl: limita de reclame nu i se aplică."
                           + learned_words)
         return
     async with _moderation_lock:

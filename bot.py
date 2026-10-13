@@ -138,7 +138,8 @@ def ads_word(n):
 def verification_offer(group_title):
     """How an unverified member earns VERIFIED_AD_LIMIT: the admin then runs /verifica."""
     group = html.escape(group_title or "grupului")
-    return (f"🎥 Fetele verificate pot posta {VERIFIED_AD_LIMIT} reclame pe zi. Trimite un video scurt "
+    return (f"⚠️ Acestea sunt ultimele zile când acceptăm reclame de la fete neverificate.\n"
+            f"🎥 Fetele verificate pot posta mai mult. Trimite un video scurt "
             f"în care spui numele grupului (<b>{group}</b>) și username-ul tău, lui @approape_ro în privat "
             f"sau aici în grup cu @admin. Verificarea îți crește și încrederea clienților.")
 

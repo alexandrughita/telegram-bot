@@ -692,8 +692,8 @@ def test_unverified_member_hitting_the_limit_is_told_how_to_get_verified(env, ru
     message(env, run, 90, "Alt anunt, vezi https://example.com/2", mid=2)
     assert member_deletions(env) == [2]
     notice = last_text(env)
-    for part in ("verificate pot posta 3 reclame", "video", "numele grupului", "username-ul tău",
-                 "@approape_ro", "@admin", "încrederea"):
+    for part in ("ultimele zile când acceptăm reclame de la fete neverificate", "verificate pot posta mai mult",
+                 "video", "numele grupului", "username-ul tău", "@approape_ro", "@admin", "încrederea"):
         assert part in notice, part
 
 

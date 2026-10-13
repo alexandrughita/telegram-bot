@@ -55,7 +55,8 @@ bot's private chat.
 
 **Member tags** (Telegram's tag next to her name; the bot needs the *manage tags* right)
 - Whoever posts an ad (caught by the bot or marked with `/reclama`) is tagged
-  **neverificată**; `/verifica` changes it to **verificată**, `/neverifica` back.
+  **Reclamă neverif.** (Telegram allows 16 characters); `/verifica` changes it to
+  **Verificată**, `/neverifica` back.
   Admins cannot be tagged (Telegram tags regular members only). A refused tag is only logged.
 
 **Admin overrides**
@@ -121,6 +122,7 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
 | `/unlock` | group (reply or id) or private (id) | admins — lifts a mute; unlike `/whitelist`, every other rule still applies |
 | `/reclama [cuvinte, …]` | group, as a reply (or just the words) | admins — counts the message as her ad, learns its text; words become keywords |
 | `/nureclama [cuvinte, …]` | group (reply or words) or private (words) | admins — forgets learned texts / keywords; alone, lists them |
+| `/verifica`, `/neverifica` | group (reply, or a list of @usernames / ids) or private (list) | admins — 3 ads a day and the **Verificată** tag; a @username works only for members the bot has seen in the group |
 | `/ban` | group (reply or id) or private (id) | admins — bans her and deletes her messages |
 | `/chatid` | anywhere | group admins / anyone in private |
 

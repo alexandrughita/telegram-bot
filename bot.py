@@ -41,8 +41,8 @@ PORT = int(os.environ.get("PORT", "10000"))
 WELCOME_TTL_SECONDS = 180
 NOTICE_TTL_SECONDS = 60
 CACHE_TTL_SECONDS = 300
-AD_LIMIT = 1
-VERIFIED_AD_LIMIT = 3  # she sent the admin a short verification video
+AD_LIMIT = 0  # unverified members cannot post ads
+VERIFIED_AD_LIMIT = 3  # the admin has verified her after receiving a video
 AD_WINDOW_HOURS = 24
 AD_REMINDER_EVERY_DAYS = 7  # at most one reminder a week
 # Telegram member tags: at most 16 characters, no emoji.
@@ -131,19 +131,6 @@ async def send_temporary(bot, chat_id, text, seconds, **kwargs):
         spawn(delete_later(bot, chat_id, sent.message_id, seconds))
     except Exception as exc:
         log.warning("Could not send notice: %s", exc)
-
-
-def ads_word(n):
-    return "reclamă" if n == 1 else "reclame"
-
-
-def verification_offer(group_title):
-    """How an unverified member earns VERIFIED_AD_LIMIT: the admin then runs /verifica."""
-    group = html.escape(group_title or "grupului")
-    return (f"⚠️ Acestea sunt ultimele zile când acceptăm reclame de la fete neverificate.\n"
-            f"🎥 Fetele verificate pot posta mai mult. Trimite un video scurt "
-            f"în care spui numele grupului (<b>{group}</b>) și username-ul tău, lui @approape_ro în privat "
-            f"sau aici în grup cu @admin. Verificarea îți crește și încrederea clienților.")
 
 
 async def ad_limit(user_id):
@@ -285,9 +272,13 @@ async def invite_status(update, context):
         return
     count = await store.invite_count(GROUP_CHAT_ID, user.id)
     limit = await ad_limit(user.id)
+    if await store.is_verified(GROUP_CHAT_ID, user.id):
+        ad_rule = f"cel mult {limit} reclame în 24 de ore"
+    else:
+        ad_rule = "reclamele sunt interzise până la verificare"
     await update.effective_message.reply_text(
         f"✅ Poți posta în grup.\n\n"
-        f"Reguli: cel mult {limit} {ads_word(limit)} în 24 de ore (linkuri externe sau același text repetat), "
+        f"Reguli: {ad_rule} (linkuri externe sau același text repetat), "
         f"{STICKERS_PER_DAY} stickere pe zi și fără aceeași poză, link sau număr repostat.\n\n"
         f"Vrei să aduci pe cineva? 🔗 Linkul tău:\n{link}\n👥 Ai adus: {count}",
         disable_web_page_preview=True,
@@ -490,6 +481,22 @@ async def on_ad_reminder(update, context):
 
 async def handle_ad(bot, message):
     user = message.from_user
+    # Unverified members cannot post any ads, including the first one. Keep this
+    # separate from the daily limit so the notice is direct and never suggests a
+    # time when an unverified ad will become allowed.
+    if not await store.is_verified(GROUP_CHAT_ID, user.id):
+        reason = "reclame: utilizator neverificat"
+        if await delete_member_message(bot, message, user.id, reason):
+            await store.log_event(GROUP_CHAT_ID, user.id, "delete", reason, message.message_id)
+        await send_temporary(
+            bot,
+            GROUP_CHAT_ID,
+            "🚫 Reclamele sunt interzise utilizatorilor neverificați.\n"
+            "📹 Trimite videoclipul de verificare în privat la @approape_ro.",
+            NOTICE_TTL_SECONDS,
+        )
+        return False
+
     count = await store.recent_ad_count(GROUP_CHAT_ID, user.id, AD_WINDOW_HOURS)
     limit = await ad_limit(user.id)
     if count >= limit:
@@ -501,12 +508,8 @@ async def handle_ad(bot, message):
             await store.log_event(GROUP_CHAT_ID, user.id, "delete", reason, message.message_id)
         await store.set_time(f"ad_limit:{GROUP_CHAT_ID}:{user.id}", datetime.now(timezone.utc))
         again = f"Poți posta din nou {friendly_when(retry, datetime.now(timezone.utc))}."
-        if limit < VERIFIED_AD_LIMIT:
-            notice = (f"⛔ {user.mention_html()}, ai atins limita de {limit} {ads_word(limit)} pe zi. {again}"
-                      f"\n\n" + verification_offer(message.chat.title))
-        else:
-            notice = (f"⛔ {user.mention_html()}, ai atins limita de anunțuri pe zi. {again}"
-                      f"\n\n{REAL_MESSAGES_NOTE}")
+        notice = (f"⛔ {user.mention_html()}, ai atins limita de {limit} reclame pe zi. {again}"
+                  f"\n\n{REAL_MESSAGES_NOTE}")
         await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS)
         return False
 
@@ -739,8 +742,10 @@ async def run_ad_reminders(bot):
         refused = await store.get_time(f"ad_reminder_refused:{GROUP_CHAT_ID}:{user_id}")
         if refused and refused >= last_limit:
             continue  # Telegram refused this block's reminder; no retry until the next block
+        if not await store.is_verified(GROUP_CHAT_ID, user_id):
+            continue  # unverified members cannot advertise at all
         if await store.recent_ad_count(GROUP_CHAT_ID, user_id, AD_WINDOW_HOURS) >= await ad_limit(user_id):
-            continue  # still blocked
+            continue  # still blocked by the verified daily limit
         try:
             await send_ad_reminder(bot, user_id)
             await store.set_time(f"ad_reminder:{GROUP_CHAT_ID}:{user_id}", now)
@@ -846,9 +851,9 @@ async def verify_targets(message, args):
 
 
 async def cmd_verify(update, context):
-    """/verifica marks members who sent the admin a verification video: they may post
-    VERIFIED_AD_LIMIT ads a day instead of AD_LIMIT, and the group is told, permanently.
-    /neverifica takes it back, answered only to the admin. Both take a reply, or a list
+    """/verifica marks members after the admin has received their verification video.
+    Verified members may post VERIFIED_AD_LIMIT ads per 24 hours; unverified members
+    cannot post ads. /neverifica takes verification back. Both accept a reply or a list
     of @usernames, ids or mentions."""
     message, bot = update.effective_message, context.bot
     if not await is_admin(bot, GROUP_CHAT_ID, update.effective_user.id):
@@ -885,7 +890,7 @@ async def cmd_verify(update, context):
         if await store.remove_verified(GROUP_CHAT_ID, user_id):
             await store.log_event(GROUP_CHAT_ID, user_id, "unverify", f"de {update.effective_user.id}")
             await set_tag(bot, user_id, UNVERIFIED_TAG)
-            lines.append(f"{name} nu mai e verificată: înapoi la {AD_LIMIT} reclame pe zi.")
+            lines.append(f"{name} nu mai e verificată: reclamele sunt interzise până la verificare.")
         else:
             lines.append(f"{name} nu era verificată.")
     await admin_reply(update, bot, "\n".join(lines) + missing)
@@ -927,7 +932,10 @@ async def cmd_mark_ad(update, context):
         if saved and saved["is_ad"]:
             text = "Mesajul era deja numărat ca reclamă."
         elif not await handle_ad(bot, ad):
-            text = f"{name} nu mai avea reclame azi: mesajul a fost șters, cu nota despre limită."
+            if not await store.is_verified(GROUP_CHAT_ID, user.id):
+                text = f"{name} nu este verificată: reclama a fost ștearsă."
+            else:
+                text = f"{name} a atins limita de reclame pe zi: mesajul a fost șters."
         else:
             if saved:
                 await store.mark_ads([saved["id"]])
@@ -1092,6 +1100,8 @@ async def posting_status(bot, user_id, member, ads, now):
     if member.status == "restricted" and not getattr(member, "can_send_messages", True):
         until = getattr(member, "until_date", None)
         return f"🔇 Mute până {local_when(until, now)}." if until else "🔇 Nu poate scrie (restricționată fără termen)."
+    if not await store.is_verified(GROUP_CHAT_ID, user_id):
+        return "⛔ Reclamele sunt interzise până la verificare; mesajele normale sunt permise."
     if ads >= await ad_limit(user_id):
         oldest = await store.oldest_ad(GROUP_CHAT_ID, user_id, AD_WINDOW_HOURS)
         when = local_when(oldest["created_at"] + timedelta(hours=AD_WINDOW_HOURS), now) if oldest else "în curând"
@@ -1127,7 +1137,9 @@ async def cmd_info(update, context):
     lines = [f"ℹ️ {name} · id {user_id}", await posting_status(bot, user_id, member, ads, now), ""]
     if await store.is_verified(GROUP_CHAT_ID, user_id):
         lines.append(f"🎥 Verificată: {VERIFIED_AD_LIMIT} reclame pe zi")
-    lines.append(f"📣 Reclame ({AD_WINDOW_HOURS}h): {ads}/{await ad_limit(user_id)}")
+        lines.append(f"📣 Reclame ({AD_WINDOW_HOURS}h): {ads}/{VERIFIED_AD_LIMIT}")
+    else:
+        lines.append("📣 Reclame: interzise până la verificare")
     lines.append(f"🎨 Stickere ({STICKER_WINDOW_HOURS}h): statice {static}/{STICKERS_PER_DAY} · "
                  f"animate {animated}/{STICKERS_PER_DAY}")
     lines.append(f"⚠️ Abateri ({VIOLATION_WINDOW_HOURS:g}h): {violations} → următoarea: {next_action}")

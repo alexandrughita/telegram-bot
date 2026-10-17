@@ -143,7 +143,7 @@ def profile_caption(kind, profile):
     heading = {
         "new": "✨ Profil nou pe approape.ro",
         "top": "🏆 Cel mai căutat profil săptămâna trecută",
-        "recommended": "💫 Profil recomandat",
+        "recommended": "💫 Profil recomandat approape.ro",
     }[kind]
     return f'{heading}\n<b>{name}</b>{where}\n<a href="{profile_url(profile)}">Vezi profilul</a>'
 

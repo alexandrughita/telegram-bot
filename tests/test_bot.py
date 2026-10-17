@@ -519,6 +519,23 @@ def test_help_message_reaches_support_and_reply_comes_back(env, run):
     env.bot.copy_message.assert_awaited_with(42, S, 8)
 
 
+def test_a_deleted_ad_reaches_support_and_a_reply_reaches_her(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
+    assert member_deletions(env) == [1]
+    header = next(c for c in env.bot.send_message.call_args_list if c.args[0] == S)
+    assert "Reclamă ștearsă" in header.args[1] and "id 90" in header.args[1]
+    env.bot.copy_message.assert_awaited_once_with(S, G, 1)
+    assert header.kwargs["reply_to_message_id"] == 501
+
+    reply = Update.de_json({"update_id": 5, "message": {
+        "message_id": 8, "date": 0, "from": user(ADMIN_ID), "text": "Scuze, nu era reclamă",
+        "chat": {"id": S, "type": "supergroup"},
+        "reply_to_message": {"message_id": 501, "date": 0, "chat": {"id": S, "type": "supergroup"}}}}, None)
+    run(bot.on_support_reply(reply, env.ctx))
+    env.bot.copy_message.assert_awaited_with(90, S, 8)
+
+
 def start(env, run, uid, payload):
     upd = private_command(env, run, uid, f"/start {payload}")
     run(bot.cmd_start(upd, SimpleNamespace(bot=env.bot, args=[payload])))
@@ -858,6 +875,7 @@ def test_a_refused_delete_is_logged_as_such_and_support_told_once(env, run):
     assert events(env, run, 90) == ["delete_failed", "delete_failed", "delete_failed"]
     alerts = [c for c in env.bot.send_message.call_args_list if c.args[0] == S]
     assert len(alerts) == 1 and "Delete messages" in alerts[0].args[1]
+    assert [c.args for c in env.bot.delete_message.call_args_list if c.args[0] == S] == [(S, 501)] * 3
 
 
 def test_ads_detected_by_content_are_blocked_for_unverified_members(env, run):

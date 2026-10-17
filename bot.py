@@ -125,6 +125,39 @@ async def delete_member_message(bot, message, user_id, reason):
         return False
 
 
+async def delete_ad(bot, message, reason):
+    """Deletes an ad. Support gets a copy, taken before the deletion, with her name, and a reply
+    to it reaches her: an admin can answer when it was not an ad."""
+    user = message.from_user
+    copy = None
+    if SUPPORT_CHAT_ID:
+        try:
+            copy = await bot.copy_message(SUPPORT_CHAT_ID, message.chat_id, message.message_id)
+        except Exception as exc:
+            log.warning("Ad not copied to support: %s", exc)
+    if not await delete_member_message(bot, message, user.id, reason):
+        if copy:  # still in the group: nothing to answer
+            try:
+                await bot.delete_message(SUPPORT_CHAT_ID, copy.message_id)
+            except Exception:
+                pass
+        return
+    await store.log_event(GROUP_CHAT_ID, user.id, "delete", reason, message.message_id)
+    if not copy:
+        return
+    try:
+        header = await bot.send_message(
+            SUPPORT_CHAT_ID,
+            f"🗑 Reclamă ștearsă: {user.mention_html()}" + (f" (@{user.username})" if user.username else "")
+            + f" · id {user.id}\nMotiv: {html.escape(reason)}\n"
+            "Dacă nu era reclamă, răspunde cu reply și mesajul ajunge la ea.",
+            parse_mode="HTML", reply_to_message_id=copy.message_id)
+        await store.save_support_thread(header.message_id, user.id)
+        await store.save_support_thread(copy.message_id, user.id)
+    except Exception as exc:
+        log.warning("Deleted ad not reported to support: %s", exc)
+
+
 async def send_temporary(bot, chat_id, text, seconds, **kwargs):
     try:
         sent = await bot.send_message(chat_id, text, parse_mode="HTML", **kwargs)
@@ -490,8 +523,7 @@ async def handle_ad(bot, message):
     # time when an unverified ad will become allowed.
     if not await store.is_verified(GROUP_CHAT_ID, user.id):
         reason = "reclame: utilizator neverificat"
-        if await delete_member_message(bot, message, user.id, reason):
-            await store.log_event(GROUP_CHAT_ID, user.id, "delete", reason, message.message_id)
+        await delete_ad(bot, message, reason)
         await send_temporary(
             bot,
             GROUP_CHAT_ID,
@@ -508,8 +540,7 @@ async def handle_ad(bot, message):
         retry = oldest["created_at"] + timedelta(hours=AD_WINDOW_HOURS) if oldest else datetime.now(timezone.utc)
         local_retry = retry.astimezone(LOCAL_TZ).strftime("%d.%m.%Y la %H:%M")
         reason = f"reclame: limita {limit}/24h; următoarea postare permisă la " + local_retry
-        if await delete_member_message(bot, message, user.id, reason):
-            await store.log_event(GROUP_CHAT_ID, user.id, "delete", reason, message.message_id)
+        await delete_ad(bot, message, reason)
         await store.set_time(f"ad_limit:{GROUP_CHAT_ID}:{user.id}", datetime.now(timezone.utc))
         again = f"Poți posta din nou {friendly_when(retry, datetime.now(timezone.utc))}."
         notice = (f"⛔ {user.mention_html()}, ai atins limita de {limit} reclame pe zi. {again}"

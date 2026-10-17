@@ -105,6 +105,9 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
   `SUPPORT_CHAT_ID`, and a reply to that alert reaches the person.
 - Anything written to the bot privately reaches `SUPPORT_CHAT_ID`. An admin's **reply**
   to that message goes back to the person.
+- Every ad the bot deletes is copied to `SUPPORT_CHAT_ID` first, with her name, id and the
+  reason. A **reply** to it reaches her privately, for when it was not an ad. Telegram lets
+  the bot write to her only if she has started the bot; otherwise tap her name and write yourself.
 
 **Scheduled posts** (2–3 a day, between 10:00 and 01:00 Bucharest time; quiet 01:00–10:00)
 - Profiles and questions alternate. For a profile, the bot tries in this order: a profile

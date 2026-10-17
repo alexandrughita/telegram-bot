@@ -970,6 +970,20 @@ def test_a_member_already_tagged_is_not_tagged_again(env, run):
     assert tags(env) == []
 
 
+def test_every_message_of_a_tagged_unverified_member_is_an_ad(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Salut tuturor", mid=1, sender_tag="Reclamă neverif.")
+    assert member_deletions(env) == [1]
+    assert last_text(env).startswith("🚫 Reclamele sunt interzise utilizatorilor neverificați.")
+
+
+def test_a_verified_member_still_tagged_unverified_posts_normally(env, run):
+    verified_member(env, run, 90)
+    message(env, run, 90, "Salut tuturor", mid=1, sender_tag="Reclamă neverif.")
+    assert member_deletions(env) == []
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 0
+
+
 def test_a_top_girl_posts_without_limit_and_keeps_her_tag(env, run):
     posting_member(env, run, 90)
     for mid in range(1, 6):

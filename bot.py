@@ -153,6 +153,10 @@ def is_top_girl(message):
     return (message.api_kwargs.get("sender_tag") or "").strip().casefold() == TOP_GIRL_TAG.casefold()
 
 
+def is_tagged_unverified(message):
+    return (message.api_kwargs.get("sender_tag") or "").strip().casefold() == UNVERIFIED_TAG.casefold()
+
+
 async def tag_advertiser(bot, message):
     """Whoever posts ads is tagged: unverified, or verified once an admin ran /verifica."""
     user_id = message.from_user.id
@@ -627,7 +631,9 @@ async def on_group_message(update, context):
 
         entities = (message.entities or ()) + (message.caption_entities or ())
         custom_emoji = sum(e.type == MessageEntity.CUSTOM_EMOJI for e in entities)
-        is_ad = external_link_ad or text_ad or content_ad(
+        # Once tagged "Reclamă neverif.", everything she posts is an ad until /verifica.
+        tagged_unverified = is_tagged_unverified(message) and not await store.is_verified(GROUP_CHAT_ID, user.id)
+        is_ad = tagged_unverified or external_link_ad or text_ad or content_ad(
             text, custom_emoji, await store.ad_keywords(GROUP_CHAT_ID), await store.learned_ads(GROUP_CHAT_ID))
         if is_ad:
             await tag_advertiser(bot, message)

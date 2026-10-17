@@ -96,7 +96,7 @@ def test_short_hints_are_ads_from_unverified_members():
     for text in ("libera web", "Liberă la webb", "web de dimineata", "caut un baiat serios in privat",
                  "𝐋𝐢𝐛𝐞𝐫𝐚 𝐰𝐞𝐛", "Vând content", "vand clipuri",
                  "gru privat", "Intră în grupurile private", "sexting", "zile porno", "Ofer un clip",
-                 "ofer clipuri"):
+                 "ofer clipuri", "Ofer poze", "vând poze", "Am pachete noi"):
         assert unverified_ad(text), text
 
 

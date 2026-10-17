@@ -43,6 +43,9 @@ bot's private chat.
   a qualifying forward of recent text posted in the group. Verified members are blocked on
   their fourth ad in the 24-hour window. Rejected ads are not violations. A week after a
   verified member hits the daily limit, she gets a private reminder when the limit has lifted.
+- **Tagged "Reclamă neverif.": every message is an ad.** Once she carries that tag and is
+  not verified, anything she posts is deleted with the same notice until an admin runs `/verifica`.
+  Links to approape.ro are still allowed.
 - Other repeats within 6 hours are violations: the same photo/clip, the same link
   (including links hidden behind text) or the same Romanian mobile number.
 - Stickers: at most 2 static and 2 animated/video per 24 hours, counted separately (a burst

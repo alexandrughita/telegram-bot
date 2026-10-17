@@ -116,6 +116,11 @@ def test_caption_escapes_and_tracks_the_link():
     assert 'href="https://www.approape.ro/creatoare/ana?utm_source=telegram' in caption
 
 
+def test_recommended_caption_names_approape():
+    caption = posts.profile_caption("recommended", Profile("/escorte/ana", "Ana", "Cluj", "https://x"))
+    assert caption.startswith("💫 Profil recomandat approape.ro\n")
+
+
 def test_firestore_fields_become_a_profile():
     fields = {"slug": "ana", "role": "creatoare", "displayName": " Ana ", "currentCity": "Iași",
               "photos": [{"url": "https://x/1.webp"}, "https://x/2.webp"]}

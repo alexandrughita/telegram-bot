@@ -632,7 +632,7 @@ async def on_group_message(update, context):
         entities = (message.entities or ()) + (message.caption_entities or ())
         custom_emoji = sum(e.type == MessageEntity.CUSTOM_EMOJI for e in entities)
         # Until /verifica: once tagged "Reclamă neverif.", everything she posts is an ad, and so
-        # is any short hint ("libera web", "in privat").
+        # is any selling phrase ("libera web", "vand content").
         unverified_hint = not await store.is_verified(GROUP_CHAT_ID, user.id) and (
             is_tagged_unverified(message) or unverified_ad(text))
         is_ad = unverified_hint or external_link_ad or text_ad or content_ad(

@@ -94,13 +94,15 @@ def test_a_layout_of_custom_emoji_is_an_ad():
 
 def test_short_hints_are_ads_from_unverified_members():
     for text in ("libera web", "Liberă la webb", "web de dimineata", "caut un baiat serios in privat",
-                 "Disponibilă acum", "scrie-mi pv", "𝐋𝐢𝐛𝐞𝐫𝐚 𝐰𝐞𝐛"):
+                 "𝐋𝐢𝐛𝐞𝐫𝐚 𝐰𝐞𝐛", "Vând content", "vand clipuri",
+                 "gru privat", "Intră în grupurile private", "sexting", "zile porno", "Ofer un clip",
+                 "ofer clipuri"):
         assert unverified_ad(text), text
 
 
 def test_short_hints_need_whole_words():
-    for text in ("Bună", "Recomand un website bun", "Cine e liberal aici?", "Spectacol de pvc",
-                 "Bună seara tuturor"):
+    for text in ("Bună", "Recomand un website bun", "Cine e liberal aici?", "Bună seara tuturor",
+                 "Ești liberă diseară? scrie-mi pv", "E disponibilă cineva în Cluj?", "Vorbim în privat"):
         assert not unverified_ad(text), text
 
 

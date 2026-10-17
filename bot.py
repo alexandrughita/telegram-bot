@@ -20,7 +20,7 @@ from telegram.ext import (
 from db import Store
 from moderation import (
     MIN_KEYWORD_LENGTH, MIN_TEXT_LENGTH_EXACT, build_fingerprint, compact_text, content_ad, duplicate_reason, has_external_link, illegal_content,
-    links_to_approape, normalize_text, same_ad_text, violation_action,
+    links_to_approape, normalize_text, same_ad_text, unverified_ad, violation_action,
 )
 import posts
 
@@ -631,9 +631,11 @@ async def on_group_message(update, context):
 
         entities = (message.entities or ()) + (message.caption_entities or ())
         custom_emoji = sum(e.type == MessageEntity.CUSTOM_EMOJI for e in entities)
-        # Once tagged "Reclamă neverif.", everything she posts is an ad until /verifica.
-        tagged_unverified = is_tagged_unverified(message) and not await store.is_verified(GROUP_CHAT_ID, user.id)
-        is_ad = tagged_unverified or external_link_ad or text_ad or content_ad(
+        # Until /verifica: once tagged "Reclamă neverif.", everything she posts is an ad, and so
+        # is any short hint ("libera web", "in privat").
+        unverified_hint = not await store.is_verified(GROUP_CHAT_ID, user.id) and (
+            is_tagged_unverified(message) or unverified_ad(text))
+        is_ad = unverified_hint or external_link_ad or text_ad or content_ad(
             text, custom_emoji, await store.ad_keywords(GROUP_CHAT_ID), await store.learned_ads(GROUP_CHAT_ID))
         if is_ad:
             await tag_advertiser(bot, message)

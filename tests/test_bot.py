@@ -867,6 +867,15 @@ def test_ads_detected_by_content_are_blocked_for_unverified_members(env, run):
     assert member_deletions(env) == [1, 2]
 
 
+def test_short_hints_are_ads_only_from_unverified_members(env, run):
+    posting_member(env, run, 90)
+    verified_member(env, run, 91)
+    message(env, run, 90, "libera la webb", mid=1)
+    message(env, run, 91, "libera la webb", mid=2)
+    assert member_deletions(env) == [1]
+    assert run(env.store.recent_ad_count(G, 91, 24)) == 0
+
+
 def test_custom_emoji_layout_counts_as_an_ad(env, run):
     posting_member(env, run, 90)
     emoji = [{"type": "custom_emoji", "offset": i, "length": 1, "custom_emoji_id": str(i)} for i in range(5)]

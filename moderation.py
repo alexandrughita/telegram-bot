@@ -83,6 +83,16 @@ def content_ad(text,custom_emoji=0,keywords=(),learned=()):
     normalized=normalize_text(text)
     return any(same_ad_text(normalized,old) for old in learned)
 
+# Short hints that read as an ad only from an unverified member ("libera web", "caut un baiat
+# serios in privat"). Whole words on the text without diacritics, so "web" never matches inside
+# another word; from a client "esti libera?" would be ordinary chat.
+UNVERIFIED_AD_RE = re.compile(
+    r"\b(?:we+b+|libera|disponibila|(?:baiat|baieti|domn|domni|barbat) serios|"
+    r"(?:in|pe) privat|pv|pm|inbox)\b")
+
+def unverified_ad(text):
+    return bool(UNVERIFIED_AD_RE.search(plain_text(text)))
+
 # Illegal content: the sender is banned and all her messages deleted. Whole words on the
 # text without diacritics; "minore" alone is left out ("probleme minore").
 ILLEGAL_RE = re.compile(

@@ -1,6 +1,6 @@
 from moderation import (
     Fingerprint, build_fingerprint, content_ad, duplicate_reason, illegal_content, extract_phones, extract_urls,
-    normalize_text, normalize_url, same_ad_text, violation_action,
+    normalize_text, normalize_url, same_ad_text, unverified_ad, violation_action,
 )
 
 
@@ -90,6 +90,18 @@ def test_ordinary_chat_is_not_an_ad():
 def test_a_layout_of_custom_emoji_is_an_ad():
     assert content_ad("Hei", custom_emoji=5)
     assert not content_ad("Hei", custom_emoji=2)
+
+
+def test_short_hints_are_ads_from_unverified_members():
+    for text in ("libera web", "Liberă la webb", "web de dimineata", "caut un baiat serios in privat",
+                 "Disponibilă acum", "scrie-mi pv", "𝐋𝐢𝐛𝐞𝐫𝐚 𝐰𝐞𝐛"):
+        assert unverified_ad(text), text
+
+
+def test_short_hints_need_whole_words():
+    for text in ("Bună", "Recomand un website bun", "Cine e liberal aici?", "Spectacol de pvc",
+                 "Bună seara tuturor"):
+        assert not unverified_ad(text), text
 
 
 def test_illegal_content_is_banned():

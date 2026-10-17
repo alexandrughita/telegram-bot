@@ -46,6 +46,9 @@ bot's private chat.
 - **Tagged "Reclamă neverif.": every message is an ad.** Once she carries that tag and is
   not verified, anything she posts is deleted with the same notice until an admin runs `/verifica`.
   Links to approape.ro are still allowed.
+- **Short hints from unverified members are ads.** Whole words, diacritics and fancy fonts
+  ignored: `web`/`webb`, `liberă`, `disponibilă`, `băiat/domn serios`, `în/pe privat`, `pv`,
+  `pm`, `inbox` ("libera la webb", "caut un baiat serios in privat"). Verified members may use them.
 - Other repeats within 6 hours are violations: the same photo/clip, the same link
   (including links hidden behind text) or the same Romanian mobile number.
 - Stickers: at most 2 static and 2 animated/video per 24 hours, counted separately (a burst

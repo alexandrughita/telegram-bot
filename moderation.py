@@ -88,8 +88,8 @@ def content_ad(text,custom_emoji=0,keywords=(),learned=()):
 # Clients are unverified too, so words they use ("esti libera?", "scrie-mi pv") are left out.
 UNVERIFIED_AD_RE = re.compile(
     r"\b(?:we+b+|(?:baiat|baieti|domn|domni|barbat) serios|"
-    r"v[ai]nd (?:content|continut|clip\w*|poze|video\w*)|ofer (?:un |o )?clip\w*|"
-    r"gru\w* privat\w*|sexting|porno)\b")
+    r"v[ai]nd (?:content|continut|clip\w*|poze|video\w*)|ofer (?:un |o )?(?:clip\w*|poze)|"
+    r"gru\w* privat\w*|sexting|porno|pachete)\b")
 
 def unverified_ad(text):
     return bool(UNVERIFIED_AD_RE.search(plain_text(text)))

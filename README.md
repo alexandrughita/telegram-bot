@@ -47,8 +47,8 @@ bot's private chat.
   not verified, anything she posts is deleted with the same notice until an admin runs `/verifica`.
   Links to approape.ro are still allowed.
 - **Selling phrases from unverified members are ads.** Whole words, diacritics and fancy fonts
-  ignored: `web`/`webb`, `băiat/domn serios`, `vând content/clipuri/poze`, `ofer (un) clip(uri)`,
-  `grup(uri) privat(e)`, `sexting`, `porno` ("libera la webb", "caut un baiat serios in privat").
+  ignored: `web`/`webb`, `băiat/domn serios`, `vând content/clipuri/poze`, `ofer (un) clip(uri)`, `ofer poze`,
+  `grup(uri) privat(e)`, `sexting`, `porno`, `pachete` ("libera la webb", "caut un baiat serios in privat").
   Clients are unverified too, so words they use (`liberă`, `pv`, `în privat`) are not on the list.
   Verified members may use them.
 - Other repeats within 6 hours are violations: the same photo/clip, the same link

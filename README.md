@@ -77,6 +77,13 @@ bot's private chat.
 - `/nureclama` undoes it: as a reply, the learned texts like that message are forgotten and
   it no longer counts as her ad; `/nureclama video call` removes keywords; alone, it lists
   what the bot learned.
+- `/mute`, or just `mute`, as a reply to her message (or `/mute <id>`): she is read-only with no
+  end date. Admins cannot be muted. An **unverified member who posts an ad** is muted the same
+  way, right after her ad is deleted.
+- `unmute @username` (or `unmute <id>`), written **to the bot in private** by an admin, lifts
+  the mute (same as `/unlock`). The @username is found only for members the bot has seen in the
+  group. `/unlock` and `/verifica` also lift it. If she is still unverified, her next ad mutes
+  her again. From anyone who is not an admin the message goes to the help desk as usual.
 - `/ban`, as a reply or with her id: she is banned for good and her messages are deleted
   (Telegram's `revoke_messages`, plus the last 24h the bot has on record). Needs the
   *Ban users* right; a refusal is explained to the admin.

@@ -230,6 +230,18 @@ async def allow_posting(bot, chat_id, user_id):
         log.warning("Could not unlock %s: %s", user_id, exc)
 
 
+async def mute_member(bot, user_id, reason):
+    """Read-only with no end date: it lasts until an admin lifts it (/unlock, /verifica or
+    `unmute @username` to the bot). False when Telegram refused."""
+    try:
+        await bot.restrict_chat_member(GROUP_CHAT_ID, user_id, READ_ONLY, use_independent_chat_permissions=True)
+    except Exception as exc:
+        log.warning("Could not mute %s: %s", user_id, exc)
+        return False
+    await store.log_event(GROUP_CHAT_ID, user_id, "mute", reason)
+    return True
+
+
 def invite_button(bot):
     return InlineKeyboardMarkup([[InlineKeyboardButton(
         "🔗 Linkul meu de invitație", url=f"https://t.me/{bot.username}?start=invite"
@@ -524,6 +536,7 @@ async def handle_ad(bot, message):
     if not await store.is_verified(GROUP_CHAT_ID, user.id):
         reason = "reclame: utilizator neverificat"
         await delete_ad(bot, message, reason)
+        await mute_member(bot, user.id, reason)
         await send_temporary(
             bot,
             GROUP_CHAT_ID,
@@ -911,6 +924,7 @@ async def cmd_verify(update, context):
             await store.add_verified(GROUP_CHAT_ID, user_id, update.effective_user.id)
             await store.log_event(GROUP_CHAT_ID, user_id, "verify", f"de {update.effective_user.id}")
             await set_tag(bot, user_id, VERIFIED_TAG)
+            await allow_posting(bot, GROUP_CHAT_ID, user_id)  # lifts the mute an unverified ad earned
         if update.effective_chat.type != "private" and not missing:
             try:
                 await bot.delete_message(update.effective_chat.id, message.message_id)
@@ -1093,6 +1107,7 @@ EVENT_LABELS = {
     "verify": "verificată", "unverify": "scoasă de la verificate",
     "delete_failed": "NEȘTERS", "ad_marked": "marcat reclamă de admin", "ban": "banată",
 }
+UNMUTE_RE = r"(?i)^\s*/?unmute\s+@?(\w+)\s*$"
 NEXT_ACTION_LABELS = {"delete": "ștergere", "warn": "avertisment", "mute": f"mute {MUTE_MINUTES} min"}
 
 
@@ -1220,6 +1235,47 @@ async def cmd_unlock(update, context):
     await admin_reply(update, bot, f"✅ {name} poate posta din nou (mute ridicat). Regulile i se aplică în continuare.")
 
 
+async def cmd_mute(update, context):
+    """/mute, or just "mute", as a reply to her message (or /mute <id>): read-only until an
+    admin lifts it."""
+    message, bot = update.effective_message, context.bot
+    if not await is_admin(bot, GROUP_CHAT_ID, update.effective_user.id):
+        return
+    user_id, name = target_user(message, context.args)
+    if user_id is None:
+        await admin_reply(update, bot, "Dă reply la un mesaj al persoanei cu mute, sau scrie id-ul ei după /mute.")
+        return
+    if await is_admin(bot, GROUP_CHAT_ID, user_id):
+        await admin_reply(update, bot, f"{name} e admin: nu poate primi mute.")
+        return
+    if await mute_member(bot, user_id, f"manual, de {update.effective_user.id}"):
+        text = f"🔇 {name} are mute până o deblochezi: scrie botului în privat „unmute @username”."
+    else:
+        text = f"Nu am putut da mute lui {name}: Telegram a refuzat (botul are dreptul „Restrict members”?)."
+    await admin_reply(update, bot, text)
+
+
+async def cmd_unmute(update, context):
+    """`unmute @username` (or an id), written to the bot in private. The @username is found
+    only for members the bot has seen in the group. Anyone who is not an admin is writing to
+    the help desk like everybody else."""
+    message, bot = update.effective_message, context.bot
+    if not await is_admin(bot, GROUP_CHAT_ID, update.effective_user.id):
+        await on_private_message(update, context)
+        return
+    target = context.matches[0].group(1)
+    member = (await store.get_member(GROUP_CHAT_ID, int(target)) if target.isdigit()
+              else await store.member_by_username(GROUP_CHAT_ID, target))
+    if not member:
+        await message.reply_text(f"Nu o cunosc pe {target}: n-a scris încă în grup. "
+                                 "Încearcă cu id-ul ei sau dă /unlock ca reply în grup.")
+        return
+    await store.set_unlocked(GROUP_CHAT_ID, member["user_id"])
+    await allow_posting(bot, GROUP_CHAT_ID, member["user_id"])
+    await store.log_event(GROUP_CHAT_ID, member["user_id"], "unlock", f"unmute, de {update.effective_user.id}")
+    await message.reply_text(f"✅ {target} poate posta din nou (mute ridicat). Regulile i se aplică în continuare.")
+
+
 async def cmd_stats(update, context):
     if not await is_admin(context.bot, GROUP_CHAT_ID, update.effective_user.id):
         return
@@ -1241,6 +1297,8 @@ def build_application():
     application.add_handler(CommandHandler("info", cmd_info, filters=group | private))
     application.add_handler(CommandHandler(["verifica", "neverifica"], cmd_verify, filters=group | private))
     application.add_handler(CommandHandler("unlock", cmd_unlock, filters=group | private))
+    application.add_handler(CommandHandler("mute", cmd_mute, filters=group))
+    application.add_handler(MessageHandler(group & filters.REPLY & filters.Regex(r"(?i)^\s*mute\s*$"), cmd_mute))
     application.add_handler(CommandHandler("reclama", cmd_mark_ad, filters=group))
     application.add_handler(CommandHandler("nureclama", cmd_unmark_ad, filters=group | private))
     application.add_handler(CommandHandler("ban", cmd_ban, filters=group | private))
@@ -1252,6 +1310,7 @@ def build_application():
     if SUPPORT_CHAT_ID:
         support = filters.Chat(SUPPORT_CHAT_ID)
         application.add_handler(MessageHandler(support & ~filters.COMMAND, on_support_reply))
+    application.add_handler(MessageHandler(private & filters.Regex(UNMUTE_RE), cmd_unmute))
     application.add_handler(MessageHandler(private & ~filters.COMMAND, on_private_message))
     application.add_handler(ChatMemberHandler(on_chat_member, ChatMemberHandler.CHAT_MEMBER))
     application.add_handler(MessageHandler(group & ~filters.StatusUpdate.ALL, on_group_message), group=1)

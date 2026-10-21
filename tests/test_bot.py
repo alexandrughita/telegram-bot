@@ -4,6 +4,7 @@
 """
 import asyncio
 import os
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -872,7 +873,8 @@ def test_a_refused_delete_is_logged_as_such_and_support_told_once(env, run):
     env.bot.delete_message = AsyncMock(side_effect=delete)
     for mid in (1, 2, 3):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
-    assert events(env, run, 90) == ["delete_failed", "delete_failed", "delete_failed"]
+    # An unverified advertiser is muted even when the ad could not be deleted.
+    assert events(env, run, 90) == ["delete_failed", "mute"] * 3
     alerts = [c for c in env.bot.send_message.call_args_list if c.args[0] == S]
     assert len(alerts) == 1 and "Delete messages" in alerts[0].args[1]
     assert [c.args for c in env.bot.delete_message.call_args_list if c.args[0] == S] == [(S, 501)] * 3
@@ -1137,7 +1139,7 @@ def test_unlock_lifts_a_mute_but_keeps_the_other_rules(env, run):
     for mid in (1, 2):
         message(env, run, 91, AD, mid=mid)
     assert member_deletions(env) == [2]
-    assert events(env, run, 91) == ["unlock", "delete"]
+    assert events(env, run, 91) == ["unlock", "delete", "mute"]  # unverified: the ad mutes her again
 
 
 def test_health_reports_the_live_commit(monkeypatch):
@@ -1246,3 +1248,86 @@ def test_a_changed_username_is_found(env, run):
     message(env, run, 90, "Salut iar", mid=2, username="nou")
     group_command(env, run, ADMIN_ID, "/verifica @nou", handler=bot.cmd_verify)
     assert run(env.store.is_verified(G, 90))
+
+
+# ---- mute: unverified ads, /mute, unmute ----------------------------------
+def muted_until_lifted(env, uid):
+    """The bot restricted her with no end date."""
+    calls = [c for c in env.bot.restrict_chat_member.call_args_list if c.args[1] == uid]
+    return bool(calls) and calls[-1].args[2] is bot.READ_ONLY and not calls[-1].kwargs.get("until_date")
+
+
+def unmute_update(env, uid, text):
+    upd = Update.de_json({"update_id": 7, "message": {
+        "message_id": 1, "date": 0, "from": user(uid), "text": text,
+        "chat": {"id": uid, "type": "private"}}}, env.bot)
+    return upd, SimpleNamespace(bot=env.bot, args=[], matches=[re.match(bot.UNMUTE_RE, text)])
+
+
+def test_an_unverified_ad_is_deleted_and_the_poster_muted_until_an_admin_lifts_it(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
+    assert member_deletions(env) == [1]
+    assert muted_until_lifted(env, 90)
+    assert events(env, run, 90) == ["delete", "mute"]
+
+
+def test_a_verified_member_over_the_ad_limit_is_not_muted(env, run):
+    verified_member(env, run, 90)
+    for mid in range(1, 5):
+        message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
+    assert member_deletions(env) == [4]
+    env.bot.restrict_chat_member.assert_not_awaited()
+
+
+def test_admin_replying_mute_mutes_the_author_of_the_post(env, run):
+    posting_member(env, run, 90)
+    group_command(env, run, ADMIN_ID, "mute", reply_to_uid=90, handler=bot.cmd_mute)
+    assert muted_until_lifted(env, 90)
+    assert events(env, run, 90) == ["mute"]
+    env.bot.delete_message.assert_awaited_with(G, COMMAND_MID)
+
+
+def test_mute_from_a_non_admin_is_ignored(env, run):
+    posting_member(env, run, 90)
+    group_command(env, run, 91, "mute", reply_to_uid=90, handler=bot.cmd_mute)
+    env.bot.restrict_chat_member.assert_not_awaited()
+
+
+def test_an_admin_cannot_be_muted(env, run):
+    env.bot.get_chat_administrators.return_value = [
+        SimpleNamespace(user=SimpleNamespace(id=ADMIN_ID)), SimpleNamespace(user=SimpleNamespace(id=2))]
+    group_command(env, run, ADMIN_ID, "/mute", reply_to_uid=2, handler=bot.cmd_mute)
+    env.bot.restrict_chat_member.assert_not_awaited()
+    assert "e admin" in last_text(env)
+
+
+def test_unmute_by_username_in_private_lifts_the_mute(env, run):
+    run(env.store.add_member(G, SimpleNamespace(id=90, username="Ana_90", first_name="Ana"), unlocked=True))
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, username="Ana_90")
+    assert muted_until_lifted(env, 90)
+    upd, ctx = unmute_update(env, ADMIN_ID, "unmute @ana_90")
+    run(bot.cmd_unmute(upd, ctx))
+    assert env.bot.posting_unlocked(90)
+    assert events(env, run, 90) == ["delete", "mute", "unlock"]
+
+
+def test_unmute_of_an_unknown_username_says_so(env, run):
+    upd, ctx = unmute_update(env, ADMIN_ID, "unmute @nobody")
+    run(bot.cmd_unmute(upd, ctx))
+    assert not env.bot.posting_unlocked(0)
+    assert "Nu o cunosc" in env.bot.send_message.call_args.kwargs["text"]
+
+
+def test_unmute_from_a_non_admin_goes_to_support_like_any_message(env, run):
+    upd, ctx = unmute_update(env, 42, "unmute @ana_90")
+    run(bot.cmd_unmute(upd, ctx))
+    env.bot.copy_message.assert_awaited_with(S, 42, 1)
+    env.bot.restrict_chat_member.assert_not_awaited()
+
+
+def test_verifica_lifts_the_mute_an_unverified_ad_earned(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
+    group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
+    assert env.bot.posting_unlocked(90)

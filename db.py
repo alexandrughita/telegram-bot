@@ -73,6 +73,21 @@ CREATE TABLE IF NOT EXISTS support_threads (
     support_message_id BIGINT PRIMARY KEY, user_id BIGINT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Supabase serves public tables over its REST API; RLS with no policies closes that API.
+-- The bot connects as the table owner, which bypasses RLS.
+ALTER TABLE members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invite_links ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invites ENABLE ROW LEVEL SECURITY;
+ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE violations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE moderation_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE whitelist ENABLE ROW LEVEL SECURITY;
+ALTER TABLE verified ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bot_posts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bot_state ENABLE ROW LEVEL SECURITY;
+ALTER TABLE learned_ads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ad_keywords ENABLE ROW LEVEL SECURITY;
+ALTER TABLE support_threads ENABLE ROW LEVEL SECURITY;
 """
 
 class Store:
@@ -182,7 +197,7 @@ class Store:
             AND created_at >= now() - %s * interval '1 hour' ORDER BY created_at ASC LIMIT 1""",(chat_id,user_id,hours))
     async def ad_limit_users(self,chat_id,days):
         return await self._all("""SELECT user_id FROM moderation_events
-            WHERE chat_id=%s AND event_type='delete' AND reason LIKE 'reclame: limita %%'
+            WHERE chat_id=%s AND event_type='delete' AND (reason LIKE 'promovări: limita %%' OR reason LIKE 'reclame: limita %%')
             AND created_at >= now() - %s * interval '1 day'
             GROUP BY user_id""",(chat_id,days))
     async def save_message(self,chat_id,user_id,message_id,fp,is_gif,is_sticker=False,is_static_sticker=False,is_ad=False):

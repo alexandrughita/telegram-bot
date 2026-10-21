@@ -148,9 +148,9 @@ async def delete_ad(bot, message, reason):
     try:
         header = await bot.send_message(
             SUPPORT_CHAT_ID,
-            f"🗑 Reclamă ștearsă: {user.mention_html()}" + (f" (@{user.username})" if user.username else "")
+            f"🗑 Promovare ștearsă: {user.mention_html()}" + (f" (@{user.username})" if user.username else "")
             + f" · id {user.id}\nMotiv: {html.escape(reason)}\n"
-            "Dacă nu era reclamă, răspunde cu reply și mesajul ajunge la ea.",
+            "Dacă nu era promovare, răspunde cu reply și mesajul ajunge la ea.",
             parse_mode="HTML", reply_to_message_id=copy.message_id)
         await store.save_support_thread(header.message_id, user.id)
         await store.save_support_thread(copy.message_id, user.id)
@@ -230,11 +230,12 @@ async def allow_posting(bot, chat_id, user_id):
         log.warning("Could not unlock %s: %s", user_id, exc)
 
 
-async def mute_member(bot, user_id, reason):
-    """Read-only with no end date: it lasts until an admin lifts it (/unlock, /verifica or
-    `unmute @username` to the bot). False when Telegram refused."""
+async def mute_member(bot, user_id, reason, until=None):
+    """Read-only until `until`, or with no end date: then it lasts until an admin lifts it
+    (/unlock, /verifica or `unmute @username` to the bot). False when Telegram refused."""
     try:
-        await bot.restrict_chat_member(GROUP_CHAT_ID, user_id, READ_ONLY, use_independent_chat_permissions=True)
+        await bot.restrict_chat_member(GROUP_CHAT_ID, user_id, READ_ONLY, until_date=until,
+                                       use_independent_chat_permissions=True)
     except Exception as exc:
         log.warning("Could not mute %s: %s", user_id, exc)
         return False
@@ -322,9 +323,9 @@ async def invite_status(update, context):
     count = await store.invite_count(GROUP_CHAT_ID, user.id)
     limit = await ad_limit(user.id)
     if await store.is_verified(GROUP_CHAT_ID, user.id):
-        ad_rule = f"cel mult {limit} reclame în 24 de ore"
+        ad_rule = f"cel mult {limit} promovări în 24 de ore"
     else:
-        ad_rule = "reclamele sunt interzise până la verificare"
+        ad_rule = "promovările sunt interzise până la verificare"
     await update.effective_message.reply_text(
         f"✅ Poți posta în grup.\n\n"
         f"Reguli: {ad_rule} (linkuri externe sau același text repetat), "
@@ -534,13 +535,13 @@ async def handle_ad(bot, message):
     # separate from the daily limit so the notice is direct and never suggests a
     # time when an unverified ad will become allowed.
     if not await store.is_verified(GROUP_CHAT_ID, user.id):
-        reason = "reclame: utilizator neverificat"
+        reason = "promovări: utilizator neverificat"
         await delete_ad(bot, message, reason)
         await mute_member(bot, user.id, reason)
         await send_temporary(
             bot,
             GROUP_CHAT_ID,
-            "🚫 Reclamele sunt interzise utilizatorilor neverificați.\n"
+            "🚫 Promovările sunt interzise utilizatorilor neverificați.\n"
             "📹 Trimite videoclipul de verificare în privat la @approape_ro.",
             NOTICE_TTL_SECONDS,
         )
@@ -552,11 +553,12 @@ async def handle_ad(bot, message):
         oldest = await store.oldest_ad(GROUP_CHAT_ID, user.id, AD_WINDOW_HOURS)
         retry = oldest["created_at"] + timedelta(hours=AD_WINDOW_HOURS) if oldest else datetime.now(timezone.utc)
         local_retry = retry.astimezone(LOCAL_TZ).strftime("%d.%m.%Y la %H:%M")
-        reason = f"reclame: limita {limit}/24h; următoarea postare permisă la " + local_retry
+        reason = f"promovări: limita {limit}/24h; următoarea postare permisă la " + local_retry
         await delete_ad(bot, message, reason)
+        await mute_member(bot, user.id, reason, until=retry)
         await store.set_time(f"ad_limit:{GROUP_CHAT_ID}:{user.id}", datetime.now(timezone.utc))
         again = f"Poți posta din nou {friendly_when(retry, datetime.now(timezone.utc))}."
-        notice = (f"⛔ {user.mention_html()}, ai atins limita de {limit} reclame pe zi. {again}"
+        notice = (f"⛔ {user.mention_html()}, ai atins limita de {limit} promovări pe zi. {again}"
                   f"\n\n{REAL_MESSAGES_NOTE}")
         await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS)
         return False
@@ -651,7 +653,7 @@ async def on_group_message(update, context):
                                       message.message_id)
             await send_temporary(
                 bot, GROUP_CHAT_ID,
-                f"{user.mention_html()}, poți trimite cel mult {STICKERS_PER_DAY} reclame pe zi. "
+                f"{user.mention_html()}, poți trimite cel mult {STICKERS_PER_DAY} promovări pe zi. "
                 f"{REAL_MESSAGES_NOTE}",
                 NOTICE_TTL_SECONDS)
             return
@@ -691,7 +693,7 @@ async def on_group_message(update, context):
         # an ad: that is handled by the ad limit, not punished twice.
         reason = duplicate_reason(fp, earlier)
         if reason and not text_ad:
-            await punish(bot, message, f"reclamă repetată: {reason}")
+            await punish(bot, message, f"promovare repetată: {reason}")
             return
 
         # GIFs are not rate-limited.
@@ -718,7 +720,7 @@ async def on_group_message(update, context):
                 await send_temporary(
                     bot,
                     GROUP_CHAT_ID,
-                    f"📣 {user.mention_html()}, reclama a fost acceptată. "
+                    f"📣 {user.mention_html()}, promovarea a fost acceptată. "
                     f"Ai folosit toate anunțurile acceptate azi.",
                     NOTICE_TTL_SECONDS,
                 )
@@ -934,7 +936,7 @@ async def cmd_verify(update, context):
         await bot.send_message(GROUP_CHAT_ID, f"🎥 {names} {verb}.", parse_mode="HTML")
         if update.effective_chat.type == "private":
             await message.reply_text(f"Gata, {names} {'poate' if len(targets) == 1 else 'pot'} posta "
-                                     f"{VERIFIED_AD_LIMIT} reclame pe zi.{missing}", parse_mode="HTML")
+                                     f"{VERIFIED_AD_LIMIT} promovări pe zi.{missing}", parse_mode="HTML")
         elif missing:
             await admin_reply(update, bot, missing.strip())
         return
@@ -943,14 +945,14 @@ async def cmd_verify(update, context):
         if await store.remove_verified(GROUP_CHAT_ID, user_id):
             await store.log_event(GROUP_CHAT_ID, user_id, "unverify", f"de {update.effective_user.id}")
             await set_tag(bot, user_id, UNVERIFIED_TAG)
-            lines.append(f"{name} nu mai e verificată: reclamele sunt interzise până la verificare.")
+            lines.append(f"{name} nu mai e verificată: promovările sunt interzise până la verificare.")
         else:
             lines.append(f"{name} nu era verificată.")
     await admin_reply(update, bot, "\n".join(lines) + missing)
 
 
 async def cmd_mark_ad(update, context):
-    """/reclama, as a reply: a message the rules missed is an ad. It counts toward her daily
+    """/promovare (or /reclama), as a reply: a message the rules missed is an ad. It counts toward her daily
     limit as if the bot had caught it, so with no ads left it is deleted with the limit note.
     The bot learns from it for good: a similar text from anyone is an ad from then on, and
     words after the command (comma-separated, with or without a reply) become keywords."""
@@ -962,33 +964,33 @@ async def cmd_mark_ad(update, context):
                 if len(k) >= MIN_KEYWORD_LENGTH]
     for keyword in keywords:
         await store.add_ad_keyword(GROUP_CHAT_ID, keyword, admin_id)
-    learned_words = f"\nCuvinte noi de reclamă: {', '.join(keywords)}." if keywords else ""
+    learned_words = f"\nCuvinte noi de promovare: {', '.join(keywords)}." if keywords else ""
     ad = message.reply_to_message
     if not ad or not ad.from_user or ad.from_user.is_bot or ad.sender_chat:
         await admin_reply(update, bot, learned_words.strip() if keywords else
-                          "Dă reply cu /reclama la mesajul care e reclamă, sau scrie după comandă "
-                          "cuvintele de reclamă, separate prin virgulă.")
+                          "Dă reply cu /promovare la mesajul care e promovare, sau scrie după comandă "
+                          "cuvintele de promovare, separate prin virgulă.")
         return
     ad_text = normalize_text(ad.text or ad.caption or "")
     if len(ad_text) >= MIN_TEXT_LENGTH_EXACT:
         await store.add_learned_ad(GROUP_CHAT_ID, ad_text, admin_id)
-        learned_words += "\nAm învățat textul: mesajele asemănătoare, de la oricine, sunt reclame de acum."
+        learned_words += "\nAm învățat textul: mesajele asemănătoare, de la oricine, sunt promovări de acum."
     user, name = ad.from_user, ad.from_user.mention_html()
     if (await is_admin(bot, GROUP_CHAT_ID, user.id) or await store.is_whitelisted(GROUP_CHAT_ID, user.id)
             or is_top_girl(ad)):
-        await admin_reply(update, bot, f"{name} e admin, pe lista albă sau Top Girl: limita de reclame nu i se aplică."
+        await admin_reply(update, bot, f"{name} e admin, pe lista albă sau Top Girl: limita de promovări nu i se aplică."
                           + learned_words)
         return
     async with _moderation_lock:
         await tag_advertiser(bot, ad)
         saved = await store.find_message(GROUP_CHAT_ID, ad.message_id)
         if saved and saved["is_ad"]:
-            text = "Mesajul era deja numărat ca reclamă."
+            text = "Mesajul era deja numărat ca promovare."
         elif not await handle_ad(bot, ad):
             if not await store.is_verified(GROUP_CHAT_ID, user.id):
-                text = f"{name} nu este verificată: reclama a fost ștearsă."
+                text = f"{name} nu este verificată: promovarea a fost ștearsă și are mute."
             else:
-                text = f"{name} a atins limita de reclame pe zi: mesajul a fost șters."
+                text = f"{name} a atins limita de promovări pe zi: mesajul a fost șters și are mute până poate posta din nou."
         else:
             if saved:
                 await store.mark_ads([saved["id"]])
@@ -996,12 +998,12 @@ async def cmd_mark_ad(update, context):
                 await store.save_message(GROUP_CHAT_ID, user.id, ad.message_id, fingerprint_of(ad), False, is_ad=True)
             await store.log_event(GROUP_CHAT_ID, user.id, "ad_marked", f"de {update.effective_user.id}", ad.message_id)
             count = await store.recent_ad_count(GROUP_CHAT_ID, user.id, AD_WINDOW_HOURS)
-            text = f"📣 Numărat ca reclamă: {name} a folosit {count}/{await ad_limit(user.id)} reclame în ultimele 24h."
+            text = f"📣 Numărat ca promovare: {name} a folosit {count}/{await ad_limit(user.id)} promovări în ultimele 24h."
     await admin_reply(update, bot, text + learned_words)
 
 
 async def cmd_unmark_ad(update, context):
-    """/nureclama undoes what /reclama taught: as a reply, the learned texts like that message
+    """/nupromovare (or /nureclama) undoes what /promovare taught: as a reply, the learned texts like that message
     are forgotten and it no longer counts as her ad; with words, those keywords are removed;
     alone, it lists what the bot learned."""
     message, bot = update.effective_message, context.bot
@@ -1018,15 +1020,15 @@ async def cmd_unmark_ad(update, context):
         forgotten = [t for t in await store.learned_ads(GROUP_CHAT_ID) if same_ad_text(replied_text, t)]
         await store.remove_learned_ads(GROUP_CHAT_ID, forgotten)
         await store.unmark_ad(GROUP_CHAT_ID, replied.message_id)
-        lines.append(f"Texte uitate: {len(forgotten)}. Mesajul nu mai e numărat ca reclamă.")
+        lines.append(f"Texte uitate: {len(forgotten)}. Mesajul nu mai e numărat ca promovare.")
     if not lines:
         keywords = await store.ad_keywords(GROUP_CHAT_ID)
         learned = await store.learned_ads(GROUP_CHAT_ID)
         lines.append("Cuvinte învățate: " + (html.escape(", ".join(keywords)) if keywords else "niciunul"))
         lines.append(f"Texte învățate: {len(learned)}")
         lines += [f"• {html.escape(t[:60])}" for t in learned[:20]]
-        lines.append("\nDă reply cu /nureclama la un mesaj ca să uit textul lui, "
-                     "sau scrie /nureclama cuvânt1, cuvânt2.")
+        lines.append("\nDă reply cu /nupromovare la un mesaj ca să uit textul lui, "
+                     "sau scrie /nupromovare cuvânt1, cuvânt2.")
     await admin_reply(update, bot, "\n".join(lines))
 
 
@@ -1105,7 +1107,7 @@ EVENT_LABELS = {
     "whitelist": "pus pe lista albă", "unwhitelist": "scos de pe lista albă",
     "reminder_refused": "reminder netrimis",
     "verify": "verificată", "unverify": "scoasă de la verificate",
-    "delete_failed": "NEȘTERS", "ad_marked": "marcat reclamă de admin", "ban": "banată",
+    "delete_failed": "NEȘTERS", "ad_marked": "marcat promovare de admin", "ban": "banată",
 }
 UNMUTE_RE = r"(?i)^\s*/?unmute\s+@?(\w+)\s*$"
 NEXT_ACTION_LABELS = {"delete": "ștergere", "warn": "avertisment", "mute": f"mute {MUTE_MINUTES} min"}
@@ -1155,11 +1157,11 @@ async def posting_status(bot, user_id, member, ads, now):
         until = getattr(member, "until_date", None)
         return f"🔇 Mute până {local_when(until, now)}." if until else "🔇 Nu poate scrie (restricționată fără termen)."
     if not await store.is_verified(GROUP_CHAT_ID, user_id):
-        return "⛔ Reclamele sunt interzise până la verificare; mesajele normale sunt permise."
+        return "⛔ Promovările sunt interzise până la verificare; mesajele normale sunt permise."
     if ads >= await ad_limit(user_id):
         oldest = await store.oldest_ad(GROUP_CHAT_ID, user_id, AD_WINDOW_HOURS)
         when = local_when(oldest["created_at"] + timedelta(hours=AD_WINDOW_HOURS), now) if oldest else "în curând"
-        return f"⛔ Limita de reclame atinsă: mesaje normale da, reclame din nou {when}."
+        return f"⛔ Limita de promovări atinsă: poate posta din nou {when}."
     return "✅ Poate posta acum."
 
 
@@ -1190,10 +1192,10 @@ async def cmd_info(update, context):
 
     lines = [f"ℹ️ {name} · id {user_id}", await posting_status(bot, user_id, member, ads, now), ""]
     if await store.is_verified(GROUP_CHAT_ID, user_id):
-        lines.append(f"🎥 Verificată: {VERIFIED_AD_LIMIT} reclame pe zi")
-        lines.append(f"📣 Reclame ({AD_WINDOW_HOURS}h): {ads}/{VERIFIED_AD_LIMIT}")
+        lines.append(f"🎥 Verificată: {VERIFIED_AD_LIMIT} promovări pe zi")
+        lines.append(f"📣 Promovări ({AD_WINDOW_HOURS}h): {ads}/{VERIFIED_AD_LIMIT}")
     else:
-        lines.append("📣 Reclame: interzise până la verificare")
+        lines.append("📣 Promovări: interzise până la verificare")
     lines.append(f"🎨 Stickere ({STICKER_WINDOW_HOURS}h): statice {static}/{STICKERS_PER_DAY} · "
                  f"animate {animated}/{STICKERS_PER_DAY}")
     lines.append(f"⚠️ Abateri ({VIOLATION_WINDOW_HOURS:g}h): {violations} → următoarea: {next_action}")
@@ -1299,8 +1301,8 @@ def build_application():
     application.add_handler(CommandHandler("unlock", cmd_unlock, filters=group | private))
     application.add_handler(CommandHandler("mute", cmd_mute, filters=group))
     application.add_handler(MessageHandler(group & filters.REPLY & filters.Regex(r"(?i)^\s*mute\s*$"), cmd_mute))
-    application.add_handler(CommandHandler("reclama", cmd_mark_ad, filters=group))
-    application.add_handler(CommandHandler("nureclama", cmd_unmark_ad, filters=group | private))
+    application.add_handler(CommandHandler(["promovare", "reclama"], cmd_mark_ad, filters=group))
+    application.add_handler(CommandHandler(["nupromovare", "nureclama"], cmd_unmark_ad, filters=group | private))
     application.add_handler(CommandHandler("ban", cmd_ban, filters=group | private))
     application.add_handler(CommandHandler("start", cmd_start, filters=private))
     application.add_handler(CallbackQueryHandler(on_ad_reminder, pattern=r"^adreminder:"))

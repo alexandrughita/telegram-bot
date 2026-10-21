@@ -76,8 +76,8 @@ def compact_text(text):
 MIN_KEYWORD_LENGTH = 4
 
 def content_ad(text,custom_emoji=0,keywords=(),learned=()):
-    """An ad by its content: selling words (built in, or added by an admin with /reclama),
-    a layout of custom emoji, or a text like an ad an admin marked with /reclama."""
+    """An ad by its content: selling words (built in, or added by an admin with /promovare),
+    a layout of custom emoji, or a text like an ad an admin marked with /promovare."""
     compact=compact_text(text)
     if custom_emoji>=AD_CUSTOM_EMOJI or any(k in compact for k in (*AD_KEYWORDS,*keywords)): return True
     normalized=normalize_text(text)

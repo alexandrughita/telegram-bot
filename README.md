@@ -33,7 +33,7 @@ bot's private chat.
   spaces or fancy fonts), or 5+ custom emoji in one message.
 - **Ads: unverified members cannot post any ads.** Every detected ad from an unverified
   member is deleted immediately, including the first one, with this notice:
-  `🚫 Reclamele sunt interzise utilizatorilor neverificați.` and
+  `🚫 Promovările sunt interzise utilizatorilor neverificați.` and
   `📹 Trimite videoclipul de verificare în privat la @approape_ro.` The video is sent to
   @approape_ro in a private chat; the bot does not tell the sender what the video must
   contain. After an admin runs `/verifica`, she may post up to 3 ads per 24 hours. A
@@ -63,23 +63,24 @@ bot's private chat.
   channel are left alone.
 
 **Member tags** (Telegram's tag next to her name; the bot needs the *manage tags* right)
-- Whoever posts an ad (caught by the bot or marked with `/reclama`) is tagged
+- Whoever posts an ad (caught by the bot or marked with `/promovare`) is tagged
   **Reclamă neverif.** (Telegram allows 16 characters); `/verifica` changes it to
   **Verificată**, `/neverifica` back.
   Admins cannot be tagged (Telegram tags regular members only). A refused tag is only logged.
 
 **Admin overrides**
-- `/reclama`, as a reply to a message the rules missed: it counts as her ad, exactly as if
+- `/promovare` (old name `/reclama` still works), as a reply to a message the rules missed: it counts as her ad, exactly as if
   the bot had caught it. If she had no ads left it is deleted with the limit note.
   The bot learns from it for good (`learned_ads`): a similar text (~75% alike) from anyone
   is an ad from then on. Words after the command, comma-separated, become keywords
-  (`ad_keywords`, at least 4 letters): `/reclama video call, cam show`, also without a reply.
-- `/nureclama` undoes it: as a reply, the learned texts like that message are forgotten and
-  it no longer counts as her ad; `/nureclama video call` removes keywords; alone, it lists
+  (`ad_keywords`, at least 4 letters): `/promovare video call, cam show`, also without a reply.
+- `/nupromovare` (or `/nureclama`) undoes it: as a reply, the learned texts like that message are forgotten and
+  it no longer counts as her ad; `/nupromovare video call` removes keywords; alone, it lists
   what the bot learned.
 - `/mute`, or just `mute`, as a reply to her message (or `/mute <id>`): she is read-only with no
   end date. Admins cannot be muted. An **unverified member who posts an ad** is muted the same
-  way, right after her ad is deleted.
+  way, right after her ad is deleted. A **verified member over the daily limit** is muted until
+  she may post again (the time the notice gives), then Telegram lifts it on its own.
 - `unmute @username` (or `unmute <id>`), written **to the bot in private** by an admin, lifts
   the mute (same as `/unlock`). The @username is found only for members the bot has seen in the
   group. `/unlock` and `/verifica` also lift it. If she is still unverified, her next ad mutes
@@ -139,8 +140,8 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
 | `/whitelist`, `/unwhitelist` | group, as a reply to the person or with her id | admins |
 | `/info` | group (reply or id) or private (id) | admins — status in the group, invites brought, ads used in 24h, violations |
 | `/unlock` | group (reply or id) or private (id) | admins — lifts a mute; unlike `/whitelist`, every other rule still applies |
-| `/reclama [cuvinte, …]` | group, as a reply (or just the words) | admins — counts the message as her ad, learns its text; words become keywords |
-| `/nureclama [cuvinte, …]` | group (reply or words) or private (words) | admins — forgets learned texts / keywords; alone, lists them |
+| `/promovare [cuvinte, …]` (or `/reclama`) | group, as a reply (or just the words) | admins — counts the message as her ad, learns its text; words become keywords |
+| `/nupromovare [cuvinte, …]` (or `/nureclama`) | group (reply or words) or private (words) | admins — forgets learned texts / keywords; alone, lists them |
 | `/verifica`, `/neverifica` | group (reply, or a list of @usernames / ids) or private (list) | admins — `/verifica` allows up to 3 ads per 24 hours and sets the **Verificată** tag; `/neverifica` blocks all ads until verification again. A @username works only for members the bot has seen in the group |
 | `/ban` | group (reply or id) or private (id) | admins — bans her and deletes her messages |
 | `/chatid` | anywhere | group admins / anyone in private |

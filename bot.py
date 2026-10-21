@@ -536,7 +536,8 @@ async def handle_ad(bot, message):
     if not await store.is_verified(GROUP_CHAT_ID, user.id):
         reason = "promovări: utilizator neverificat"
         await delete_ad(bot, message, reason)
-        await mute_member(bot, user.id, reason)
+        if is_tagged_unverified(message):  # already tagged by an earlier ad: now she is muted
+            await mute_member(bot, user.id, reason)
         await send_temporary(
             bot,
             GROUP_CHAT_ID,
@@ -986,7 +987,8 @@ async def cmd_mark_ad(update, context):
             text = "Mesajul era deja numărat ca promovare."
         elif not await handle_ad(bot, ad):
             if not await store.is_verified(GROUP_CHAT_ID, user.id):
-                text = f"{name} nu este verificată: promovarea a fost ștearsă și are mute."
+                muted = " și are mute" if is_tagged_unverified(ad) else ""
+                text = f"{name} nu este verificată: promovarea a fost ștearsă{muted}."
             else:
                 text = f"{name} a atins limita de promovări pe zi: mesajul a fost șters."
         else:

@@ -815,7 +815,7 @@ def test_reclama_counts_a_missed_ad_and_the_verified_daily_limit_applies(env, ru
     message(env, run, 90, "Anunt numarul 3, vezi https://example.com/3", mid=32)
     message(env, run, 90, "Anunt numarul 4, vezi https://example.com/4", mid=33)
     assert member_deletions(env) == [33]
-    assert events(env, run, 90) == ["ad_marked", "delete", "mute"]
+    assert events(env, run, 90) == ["ad_marked", "delete"]
 
 
 def test_reclama_deletes_the_ad_when_verified_member_has_used_three(env, run):
@@ -1004,6 +1004,7 @@ def test_every_message_of_a_tagged_unverified_member_is_an_ad(env, run):
     message(env, run, 90, "Salut tuturor", mid=1, sender_tag="Reclamă neverif.")
     assert member_deletions(env) == [1]
     assert last_text(env).startswith("🚫 Promovările sunt interzise utilizatorilor neverificați.")
+    assert muted_until_lifted(env, 90)
 
 
 def test_a_verified_member_still_tagged_unverified_posts_normally(env, run):
@@ -1272,16 +1273,12 @@ def test_an_unverified_ad_is_deleted_and_the_poster_muted_until_an_admin_lifts_i
     assert events(env, run, 90) == ["delete", "mute"]
 
 
-def test_ad_over_the_limit_mutes_her_until_she_may_post_again(env, run):
-    posting_member(env, run, 90)
-    group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
+def test_a_verified_member_over_the_ad_limit_is_not_muted(env, run):
+    verified_member(env, run, 90)
     for mid in range(1, 5):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
-    mute = env.bot.restrict_chat_member.call_args
-    assert mute.args[1:3] == (90, bot.READ_ONLY)
-    oldest = run(env.store.oldest_ad(G, 90, bot.AD_WINDOW_HOURS))["created_at"]
-    assert mute.kwargs["until_date"] == oldest + timedelta(hours=bot.AD_WINDOW_HOURS)
-    assert events(env, run, 90)[-2:] == ["delete", "mute"]
+    assert member_deletions(env) == [4]
+    env.bot.restrict_chat_member.assert_not_awaited()
 
 
 def test_admin_replying_mute_mutes_the_author_of_the_post(env, run):

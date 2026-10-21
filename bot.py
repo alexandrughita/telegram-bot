@@ -230,12 +230,11 @@ async def allow_posting(bot, chat_id, user_id):
         log.warning("Could not unlock %s: %s", user_id, exc)
 
 
-async def mute_member(bot, user_id, reason, until=None):
-    """Read-only until `until`, or with no end date: then it lasts until an admin lifts it
-    (/unlock, /verifica or `unmute @username` to the bot). False when Telegram refused."""
+async def mute_member(bot, user_id, reason):
+    """Read-only with no end date: it lasts until an admin lifts it (/unlock, /verifica or
+    `unmute @username` to the bot). False when Telegram refused."""
     try:
-        await bot.restrict_chat_member(GROUP_CHAT_ID, user_id, READ_ONLY, until_date=until,
-                                       use_independent_chat_permissions=True)
+        await bot.restrict_chat_member(GROUP_CHAT_ID, user_id, READ_ONLY, use_independent_chat_permissions=True)
     except Exception as exc:
         log.warning("Could not mute %s: %s", user_id, exc)
         return False
@@ -555,7 +554,6 @@ async def handle_ad(bot, message):
         local_retry = retry.astimezone(LOCAL_TZ).strftime("%d.%m.%Y la %H:%M")
         reason = f"promovări: limita {limit}/24h; următoarea postare permisă la " + local_retry
         await delete_ad(bot, message, reason)
-        await mute_member(bot, user.id, reason, until=retry)
         await store.set_time(f"ad_limit:{GROUP_CHAT_ID}:{user.id}", datetime.now(timezone.utc))
         again = f"Poți posta din nou {friendly_when(retry, datetime.now(timezone.utc))}."
         notice = (f"⛔ {user.mention_html()}, ai atins limita de {limit} promovări pe zi. {again}"
@@ -990,7 +988,7 @@ async def cmd_mark_ad(update, context):
             if not await store.is_verified(GROUP_CHAT_ID, user.id):
                 text = f"{name} nu este verificată: promovarea a fost ștearsă și are mute."
             else:
-                text = f"{name} a atins limita de promovări pe zi: mesajul a fost șters și are mute până poate posta din nou."
+                text = f"{name} a atins limita de promovări pe zi: mesajul a fost șters."
         else:
             if saved:
                 await store.mark_ads([saved["id"]])
@@ -1161,7 +1159,7 @@ async def posting_status(bot, user_id, member, ads, now):
     if ads >= await ad_limit(user_id):
         oldest = await store.oldest_ad(GROUP_CHAT_ID, user_id, AD_WINDOW_HOURS)
         when = local_when(oldest["created_at"] + timedelta(hours=AD_WINDOW_HOURS), now) if oldest else "în curând"
-        return f"⛔ Limita de promovări atinsă: poate posta din nou {when}."
+        return f"⛔ Limita de promovări atinsă: mesaje normale da, promovări din nou {when}."
     return "✅ Poate posta acum."
 
 

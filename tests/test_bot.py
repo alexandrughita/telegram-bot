@@ -873,8 +873,7 @@ def test_a_refused_delete_is_logged_as_such_and_support_told_once(env, run):
     env.bot.delete_message = AsyncMock(side_effect=delete)
     for mid in (1, 2, 3):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
-    # An unverified advertiser is muted even when the ad could not be deleted.
-    assert events(env, run, 90) == ["delete_failed", "mute"] * 3
+    assert events(env, run, 90) == ["delete_failed"] * 3
     alerts = [c for c in env.bot.send_message.call_args_list if c.args[0] == S]
     assert len(alerts) == 1 and "Delete messages" in alerts[0].args[1]
     assert [c.args for c in env.bot.delete_message.call_args_list if c.args[0] == S] == [(S, 501)] * 3
@@ -1140,7 +1139,7 @@ def test_unlock_lifts_a_mute_but_keeps_the_other_rules(env, run):
     for mid in (1, 2):
         message(env, run, 91, AD, mid=mid)
     assert member_deletions(env) == [2]
-    assert events(env, run, 91) == ["unlock", "delete", "mute"]  # unverified: the ad mutes her again
+    assert events(env, run, 91) == ["unlock", "delete"]
 
 
 def test_health_reports_the_live_commit(monkeypatch):
@@ -1265,9 +1264,17 @@ def unmute_update(env, uid, text):
     return upd, SimpleNamespace(bot=env.bot, args=[], matches=[re.match(bot.UNMUTE_RE, text)])
 
 
-def test_an_unverified_ad_is_deleted_and_the_poster_muted_until_an_admin_lifts_it(env, run):
+def test_an_untagged_unverified_ad_is_deleted_without_a_mute(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
+    assert member_deletions(env) == [1]
+    env.bot.restrict_chat_member.assert_not_awaited()
+    assert events(env, run, 90) == ["delete"]
+
+
+def test_a_tagged_unverified_post_is_deleted_and_she_is_muted_until_an_admin_lifts_it(env, run):
+    posting_member(env, run, 90)
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, sender_tag="Reclamă neverif.")
     assert member_deletions(env) == [1]
     assert muted_until_lifted(env, 90)
     assert events(env, run, 90) == ["delete", "mute"]
@@ -1305,7 +1312,8 @@ def test_an_admin_cannot_be_muted(env, run):
 
 def test_unmute_by_username_in_private_lifts_the_mute(env, run):
     run(env.store.add_member(G, SimpleNamespace(id=90, username="Ana_90", first_name="Ana"), unlocked=True))
-    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, username="Ana_90")
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, username="Ana_90",
+            sender_tag="Reclamă neverif.")
     assert muted_until_lifted(env, 90)
     upd, ctx = unmute_update(env, ADMIN_ID, "unmute @ana_90")
     run(bot.cmd_unmute(upd, ctx))
@@ -1329,6 +1337,6 @@ def test_unmute_from_a_non_admin_goes_to_support_like_any_message(env, run):
 
 def test_verifica_lifts_the_mute_an_unverified_ad_earned(env, run):
     posting_member(env, run, 90)
-    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, sender_tag="Reclamă neverif.")
     group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
     assert env.bot.posting_unlocked(90)

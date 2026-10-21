@@ -44,7 +44,8 @@ bot's private chat.
   their fourth ad in the 24-hour window. Rejected ads are not violations. A week after a
   verified member hits the daily limit, she gets a private reminder when the limit has lifted.
 - **Tagged "Reclamă neverif.": every message is an ad.** Once she carries that tag and is
-  not verified, anything she posts is deleted with the same notice until an admin runs `/verifica`.
+  not verified, anything she posts is deleted with the same notice and she is muted until an
+  admin lifts it, or runs `/verifica`.
   Links to approape.ro are still allowed.
 - **Selling phrases from unverified members are ads.** Whole words, diacritics and fancy fonts
   ignored: `web`/`webb`, `băiat/domn serios`, `vând content/clipuri/poze`, `ofer (un) clip(uri)`, `ofer poze`,
@@ -78,12 +79,12 @@ bot's private chat.
   it no longer counts as her ad; `/nupromovare video call` removes keywords; alone, it lists
   what the bot learned.
 - `/mute`, or just `mute`, as a reply to her message (or `/mute <id>`): she is read-only with no
-  end date. Admins cannot be muted. An **unverified member who posts an ad** is muted the same
-  way, right after her ad is deleted.
+  end date. Admins cannot be muted. A member **tagged "Reclamă neverif."** who posts is muted
+  the same way, right after her message is deleted. Her first ad only gets her the tag.
 - `unmute @username` (or `unmute <id>`), written **to the bot in private** by an admin, lifts
   the mute (same as `/unlock`). The @username is found only for members the bot has seen in the
-  group. `/unlock` and `/verifica` also lift it. If she is still unverified, her next ad mutes
-  her again. From anyone who is not an admin the message goes to the help desk as usual.
+  group. `/unlock` and `/verifica` also lift it. If she still carries the tag and is unverified,
+  her next post mutes her again. From anyone who is not an admin the message goes to the help desk as usual.
 - `/ban`, as a reply or with her id: she is banned for good and her messages are deleted
   (Telegram's `revoke_messages`, plus the last 24h the bot has on record). Needs the
   *Ban users* right; a refusal is explained to the admin.

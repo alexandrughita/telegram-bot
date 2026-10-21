@@ -79,8 +79,7 @@ bot's private chat.
   what the bot learned.
 - `/mute`, or just `mute`, as a reply to her message (or `/mute <id>`): she is read-only with no
   end date. Admins cannot be muted. An **unverified member who posts an ad** is muted the same
-  way, right after her ad is deleted. A **verified member over the daily limit** is muted until
-  she may post again (the time the notice gives), then Telegram lifts it on its own.
+  way, right after her ad is deleted.
 - `unmute @username` (or `unmute <id>`), written **to the bot in private** by an admin, lifts
   the mute (same as `/unlock`). The @username is found only for members the bot has seen in the
   group. `/unlock` and `/verifica` also lift it. If she is still unverified, her next ad mutes

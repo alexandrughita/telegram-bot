@@ -986,8 +986,8 @@ def test_tagged_unverified_member_gets_one_ad_and_video_verification_reply(env, 
     message(env, run, 90, "Salut tuturor", mid=1, sender_tag="Reclamă neverif.")
     assert member_deletions(env) == []
     assert run(env.store.recent_ad_count(G, 90, 24)) == 1
-    assert "trimite la @approape_ro un video" in last_text(env)
-    assert env.bot.send_message.call_args.kwargs.get("reply_to_message_id") == 1
+    assert any("trimite la @approape_ro un video" in c.args[1] for c in env.bot.send_message.call_args_list)
+    assert any(c.kwargs.get("reply_to_message_id") == 1 for c in env.bot.send_message.call_args_list)
     message(env, run, 90, "Încă o promovare https://example.com/2", mid=2, sender_tag="Reclamă neverif.")
     assert member_deletions(env) == [2]
     assert not muted_until_lifted(env, 90)

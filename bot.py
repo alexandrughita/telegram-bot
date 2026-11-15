@@ -194,7 +194,9 @@ def is_tagged_unverified(message):
 
 
 async def tag_advertiser(bot, message):
-    """Whoever posts ads is tagged: unverified, or verified once an admin ran /verifica."""
+    """Preserve the manually assigned Top Girl tag; otherwise mark verified/unverified advertisers."""
+    if is_top_girl(message):
+        return
     user_id = message.from_user.id
     tag = VERIFIED_TAG if await store.is_verified(GROUP_CHAT_ID, user_id) else UNVERIFIED_TAG
     await set_tag(bot, user_id, tag, message.api_kwargs.get("sender_tag"))
@@ -324,10 +326,7 @@ async def invite_status(update, context):
         return
     count = await store.invite_count(GROUP_CHAT_ID, user.id)
     limit = await ad_limit(user.id)
-    if await store.is_verified(GROUP_CHAT_ID, user.id):
-        ad_rule = f"cel mult {limit} promovări în 24 de ore"
-    else:
-        ad_rule = "promovările sunt interzise până la verificare"
+    ad_rule = f"cel mult {limit} promovări în 24 de ore"
     await update.effective_message.reply_text(
         f"✅ Poți posta în grup.\n\n"
         f"Reguli: {ad_rule} (linkuri externe sau același text repetat), "

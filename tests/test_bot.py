@@ -711,15 +711,15 @@ def test_whitelisted_private_status(env, run):
     assert "lista albă" in env.bot.send_message.call_args.kwargs["text"]
 
 
-# ---- verified: 3 ads a day ------------------------------------------------
-def test_verified_member_may_post_three_ads_a_day(env, run):
+# ---- verified: 5 ads a day ------------------------------------------------
+def test_verified_member_may_post_five_ads_a_day(env, run):
     posting_member(env, run, 90)
     group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
     assert run(env.store.is_verified(G, 90))
     for mid in range(1, 7):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
     assert member_deletions(env) == [6]
-    assert "ai atins limita de 3 promovări pe zi" in last_text(env)
+    assert "ai atins limita de 5 promovări pe zi" in last_text(env)
     assert "video" not in last_text(env)  # already verified: nothing to offer
     assert bot.REAL_MESSAGES_NOTE in last_text(env)
     assert events(env, run, 90)[0] == "verify"
@@ -731,8 +731,8 @@ def test_only_the_last_allowed_ad_gets_an_accepted_reply(env, run):
     env.bot.send_message.reset_mock()
     for mid in range(1, 3):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
-    assert not env.bot.send_message.called  # 1/3 and 2/3: no reply
-    message(env, run, 90, "Anunt numarul 3, vezi https://example.com/3", mid=3)
+    assert not env.bot.send_message.called  # below the 5-ad limit: no reply
+    message(env, run, 90, "Anunt numarul 5, vezi https://example.com/3", mid=3)
     assert "promovarea a fost acceptată. Ai folosit toate anunțurile acceptate azi." in last_text(env)
 
 
@@ -810,7 +810,7 @@ def test_reclama_counts_a_missed_ad_and_the_verified_daily_limit_applies(env, ru
     verified_member(env, run, 90)
     message(env, run, 90, MISSED_AD, mid=29)  # group_command replies to message 29
     group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad)
-    assert "1/3 promovări" in env.bot.send_message.call_args.args[1]
+    assert "1/5 promovări" in env.bot.send_message.call_args.args[1]
     message(env, run, 90, "Anunt numarul 2, vezi https://example.com/2", mid=31)
     message(env, run, 90, "Anunt numarul 3, vezi https://example.com/3", mid=32)
     message(env, run, 90, "Anunt numarul 4, vezi https://example.com/4", mid=33)
@@ -818,14 +818,14 @@ def test_reclama_counts_a_missed_ad_and_the_verified_daily_limit_applies(env, ru
     assert events(env, run, 90) == ["ad_marked", "delete"]
 
 
-def test_reclama_deletes_the_ad_when_verified_member_has_used_three(env, run):
+def test_reclama_deletes_the_ad_when_verified_member_has_used_five(env, run):
     verified_member(env, run, 90)
-    for mid in (1, 2, 3):
+    for mid in (1, 2, 3, 4, 5):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
     message(env, run, 90, MISSED_AD, mid=29)
     group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad)
     assert member_deletions(env) == [29]
-    assert any("ai atins limita de 3 promovări pe zi" in c.args[1] for c in env.bot.send_message.call_args_list)
+    assert any("ai atins limita de 5 promovări pe zi" in c.args[1] for c in env.bot.send_message.call_args_list)
 
 
 def test_reclama_on_an_ad_already_counted_changes_nothing(env, run):
@@ -1287,9 +1287,9 @@ def test_tagged_unverified_member_is_not_muted_after_daily_limit(env, run):
 
 def test_a_verified_member_over_the_ad_limit_is_not_muted(env, run):
     verified_member(env, run, 90)
-    for mid in range(1, 5):
+    for mid in range(1, 7):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
-    assert member_deletions(env) == [4]
+    assert member_deletions(env) == [6]
     env.bot.restrict_chat_member.assert_not_awaited()
 
 

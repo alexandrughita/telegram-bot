@@ -400,11 +400,8 @@ def test_a_lookalike_domain_is_not_approape(env, run):
     posting_member(env, run, 90)
     for mid in (1, 2):
         message(env, run, 90, "Vezi https://approape.ro.example.com/x", mid=mid)
-    assert member_deletions(env) == [1, 2]
-    assert last_text(env) == (
-        "🚫 Promovările sunt interzise utilizatorilor neverificați.\n"
-        "📹 Trimite videoclipul de verificare în privat la @approape_ro."
-    )
+    assert member_deletions(env) == [2]
+    assert "ai atins limita de 1 promovări pe zi" in last_text(env)
 
 
 def test_stickers_arriving_together_are_still_limited(env, run):
@@ -453,11 +450,8 @@ def test_forwarded_repeats_are_blocked_for_unverified_members(env, run):
     message(env, run, 90, "Alt anunt la fel de lung ca primul", mid=2)
     run(bot.on_group_message(forwarded(91, 3, AD), env.ctx))
     run(bot.on_group_message(forwarded(91, 4, "Alt anunt la fel de lung ca primul"), env.ctx))
-    assert member_deletions(env) == [3, 4]
-    assert last_text(env) == (
-        "🚫 Promovările sunt interzise utilizatorilor neverificați.\n"
-        "📹 Trimite videoclipul de verificare în privat la @approape_ro."
-    )
+    assert member_deletions(env) == [4]
+    assert run(env.store.recent_ad_count(G, 91, 24)) == 1
 
 
 def test_forwarding_text_seen_more_than_a_day_ago_is_not_an_ad(env, run):
@@ -1309,13 +1303,12 @@ def test_an_admin_cannot_be_muted(env, run):
 
 def test_unmute_by_username_in_private_lifts_the_mute(env, run):
     run(env.store.add_member(G, SimpleNamespace(id=90, username="Ana_90", first_name="Ana"), unlocked=True))
-    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, username="Ana_90",
-            sender_tag="Reclamă neverif.")
+    run(bot.mute_member(env.bot, 90, "test mute"))
     assert muted_until_lifted(env, 90)
     upd, ctx = unmute_update(env, ADMIN_ID, "unmute @ana_90")
     run(bot.cmd_unmute(upd, ctx))
     assert env.bot.posting_unlocked(90)
-    assert events(env, run, 90) == ["delete", "mute", "unlock"]
+    assert events(env, run, 90) == ["mute", "unlock"]
 
 
 def test_unmute_of_an_unknown_username_says_so(env, run):

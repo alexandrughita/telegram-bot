@@ -272,7 +272,8 @@ def test_the_same_text_hours_apart_still_counts(env, run):
     message(env, run, 90, AD, mid=1)
     run(env.store._execute("UPDATE messages SET created_at = now() - interval '7 hours'"))
     message(env, run, 90, AD, mid=2)
-    env.bot.delete_message.assert_awaited_once_with(G, 2)
+    env.bot.delete_message.assert_not_awaited()
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 1
 
 
 def test_the_same_text_is_allowed_again_after_a_day(env, run):

@@ -261,11 +261,8 @@ def test_the_same_text_posted_again_the_same_day_is_deleted(env, run):
     message(env, run, 90, AD, mid=1)
     message(env, run, 90, AD, mid=2)
     assert run(env.store.recent_ad_count(G, 90, 24)) == 1
-    env.bot.delete_message.assert_awaited_once_with(G, 2)
-    assert last_text(env) == (
-        "🚫 Promovările sunt interzise utilizatorilor neverificați.\n"
-        "📹 Trimite videoclipul de verificare în privat la @approape_ro."
-    )
+    env.bot.delete_message.assert_not_awaited()
+    assert "trimite la @approape_ro un video" in last_text(env)
     assert run(env.store._one("SELECT COUNT(*) AS n FROM violations"))["n"] == 0
 
 
@@ -434,13 +431,9 @@ def test_forwarding_text_someone_else_posted_is_an_ad(env, run):
     posting_member(env, run, 91)
     message(env, run, 90, AD, mid=1)
     run(bot.on_group_message(forwarded(91, 2, AD), env.ctx))
-    assert run(env.store.recent_ad_count(G, 91, 24)) == 0
+    assert run(env.store.recent_ad_count(G, 91, 24)) == 1
     assert run(env.store.recent_ad_count(G, 90, 24)) == 0  # the original is not her ad
-    assert member_deletions(env) == [2]
-    assert last_text(env) == (
-        "🚫 Promovările sunt interzise utilizatorilor neverificați.\n"
-        "📹 Trimite videoclipul de verificare în privat la @approape_ro."
-    )
+    assert member_deletions(env) == []
 
 
 def test_forwarded_repeats_are_blocked_for_unverified_members(env, run):

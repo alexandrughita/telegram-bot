@@ -729,36 +729,29 @@ def test_only_the_last_allowed_ad_gets_an_accepted_reply(env, run):
     posting_member(env, run, 90)
     group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
     env.bot.send_message.reset_mock()
-    for mid in range(1, 3):
+    for mid in range(1, 5):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
     assert not env.bot.send_message.called  # below the 5-ad limit: no reply
-    message(env, run, 90, "Anunt numarul 5, vezi https://example.com/3", mid=3)
-    assert "promovarea a fost acceptată. Ai folosit toate anunțurile acceptate azi." in last_text(env)
+    message(env, run, 90, "Anunt numarul 5, vezi https://example.com/5", mid=5)
+    assert "Ai folosit toate cele 5 promovări acceptate" in last_text(env)
 
 
-def test_unverified_member_cannot_post_any_ads_until_verified(env, run):
+def test_unverified_member_can_post_one_ad_until_verified(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
     message(env, run, 90, "Alt anunt, vezi https://example.com/2", mid=2)
-    assert member_deletions(env) == [1, 2]
-    assert last_text(env) == (
-        "🚫 Promovările sunt interzise utilizatorilor neverificați.\n"
-        "📹 Trimite videoclipul de verificare în privat la @approape_ro."
-    )
-    assert run(env.store.recent_ad_count(G, 90, 24)) == 0
+    assert member_deletions(env) == [2]
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 1
+    assert "trimite la @approape_ro un video" in last_text(env)
 
-
-def test_neverifica_blocks_all_ads_until_verified_again(env, run):
+def test_neverifica_returns_member_to_one_ad_per_day(env, run):
     posting_member(env, run, 90)
     group_command(env, run, ADMIN_ID, "/verifica 90", handler=bot.cmd_verify)
     group_command(env, run, ADMIN_ID, "/neverifica", reply_to_uid=90, handler=bot.cmd_verify)
     for mid in (1, 2):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
-    assert member_deletions(env) == [1, 2]
-    assert last_text(env) == (
-        "🚫 Promovările sunt interzise utilizatorilor neverificați.\n"
-        "📹 Trimite videoclipul de verificare în privat la @approape_ro."
-    )
+    assert member_deletions(env) == [2]
+    assert "trimite la @approape_ro un video" in last_text(env)
 
 
 def test_verifica_announces_her_in_the_group_for_good(env, run):
@@ -811,10 +804,9 @@ def test_reclama_counts_a_missed_ad_and_the_verified_daily_limit_applies(env, ru
     message(env, run, 90, MISSED_AD, mid=29)  # group_command replies to message 29
     group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad)
     assert "1/5 promovări" in env.bot.send_message.call_args.args[1]
-    message(env, run, 90, "Anunt numarul 2, vezi https://example.com/2", mid=31)
-    message(env, run, 90, "Anunt numarul 3, vezi https://example.com/3", mid=32)
-    message(env, run, 90, "Anunt numarul 4, vezi https://example.com/4", mid=33)
-    assert member_deletions(env) == [33]
+    for mid in range(2, 6):
+        message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=30 + mid)
+    assert member_deletions(env) == [35]
     assert events(env, run, 90) == ["ad_marked", "delete"]
 
 

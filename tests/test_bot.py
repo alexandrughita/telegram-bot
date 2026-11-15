@@ -261,11 +261,8 @@ def test_the_same_text_posted_again_the_same_day_is_deleted(env, run):
     message(env, run, 90, AD, mid=1)
     message(env, run, 90, AD, mid=2)
     assert run(env.store.recent_ad_count(G, 90, 24)) == 1
-    env.bot.delete_message.assert_awaited_once_with(G, 2)
-    assert last_text(env) == (
-        "🚫 Promovările sunt interzise utilizatorilor neverificați.\n"
-        "📹 Trimite videoclipul de verificare în privat la @approape_ro."
-    )
+    env.bot.delete_message.assert_not_awaited()
+    assert "trimite la @approape_ro un video" in last_text(env)
     assert run(env.store._one("SELECT COUNT(*) AS n FROM violations"))["n"] == 0
 
 
@@ -275,7 +272,8 @@ def test_the_same_text_hours_apart_still_counts(env, run):
     message(env, run, 90, AD, mid=1)
     run(env.store._execute("UPDATE messages SET created_at = now() - interval '7 hours'"))
     message(env, run, 90, AD, mid=2)
-    env.bot.delete_message.assert_awaited_once_with(G, 2)
+    env.bot.delete_message.assert_not_awaited()
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 1
 
 
 def test_the_same_text_is_allowed_again_after_a_day(env, run):
@@ -400,11 +398,8 @@ def test_a_lookalike_domain_is_not_approape(env, run):
     posting_member(env, run, 90)
     for mid in (1, 2):
         message(env, run, 90, "Vezi https://approape.ro.example.com/x", mid=mid)
-    assert member_deletions(env) == [1, 2]
-    assert last_text(env) == (
-        "🚫 Promovările sunt interzise utilizatorilor neverificați.\n"
-        "📹 Trimite videoclipul de verificare în privat la @approape_ro."
-    )
+    assert member_deletions(env) == [2]
+    assert "ai atins limita de 1 promovare pe zi" in last_text(env)
 
 
 def test_stickers_arriving_together_are_still_limited(env, run):
@@ -437,13 +432,9 @@ def test_forwarding_text_someone_else_posted_is_an_ad(env, run):
     posting_member(env, run, 91)
     message(env, run, 90, AD, mid=1)
     run(bot.on_group_message(forwarded(91, 2, AD), env.ctx))
-    assert run(env.store.recent_ad_count(G, 91, 24)) == 0
+    assert run(env.store.recent_ad_count(G, 91, 24)) == 1
     assert run(env.store.recent_ad_count(G, 90, 24)) == 0  # the original is not her ad
-    assert member_deletions(env) == [2]
-    assert last_text(env) == (
-        "🚫 Promovările sunt interzise utilizatorilor neverificați.\n"
-        "📹 Trimite videoclipul de verificare în privat la @approape_ro."
-    )
+    assert member_deletions(env) == []
 
 
 def test_forwarded_repeats_are_blocked_for_unverified_members(env, run):
@@ -453,11 +444,8 @@ def test_forwarded_repeats_are_blocked_for_unverified_members(env, run):
     message(env, run, 90, "Alt anunt la fel de lung ca primul", mid=2)
     run(bot.on_group_message(forwarded(91, 3, AD), env.ctx))
     run(bot.on_group_message(forwarded(91, 4, "Alt anunt la fel de lung ca primul"), env.ctx))
-    assert member_deletions(env) == [3, 4]
-    assert last_text(env) == (
-        "🚫 Promovările sunt interzise utilizatorilor neverificați.\n"
-        "📹 Trimite videoclipul de verificare în privat la @approape_ro."
-    )
+    assert member_deletions(env) == [4]
+    assert run(env.store.recent_ad_count(G, 91, 24)) == 1
 
 
 def test_forwarding_text_seen_more_than_a_day_ago_is_not_an_ad(env, run):
@@ -711,15 +699,15 @@ def test_whitelisted_private_status(env, run):
     assert "lista albă" in env.bot.send_message.call_args.kwargs["text"]
 
 
-# ---- verified: 3 ads a day ------------------------------------------------
-def test_verified_member_may_post_three_ads_a_day(env, run):
+# ---- verified: 5 ads a day ------------------------------------------------
+def test_verified_member_may_post_five_ads_a_day(env, run):
     posting_member(env, run, 90)
     group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
     assert run(env.store.is_verified(G, 90))
-    for mid in range(1, 5):
+    for mid in range(1, 7):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
-    assert member_deletions(env) == [4]
-    assert "ai atins limita de 3 promovări pe zi" in last_text(env)
+    assert member_deletions(env) == [6]
+    assert "ai atins limita de 5 promovări pe zi" in last_text(env)
     assert "video" not in last_text(env)  # already verified: nothing to offer
     assert bot.REAL_MESSAGES_NOTE in last_text(env)
     assert events(env, run, 90)[0] == "verify"
@@ -729,36 +717,29 @@ def test_only_the_last_allowed_ad_gets_an_accepted_reply(env, run):
     posting_member(env, run, 90)
     group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
     env.bot.send_message.reset_mock()
-    for mid in range(1, 3):
+    for mid in range(1, 5):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
-    assert not env.bot.send_message.called  # 1/3 and 2/3: no reply
-    message(env, run, 90, "Anunt numarul 3, vezi https://example.com/3", mid=3)
-    assert "promovarea a fost acceptată. Ai folosit toate anunțurile acceptate azi." in last_text(env)
+    assert not env.bot.send_message.called  # below the 5-ad limit: no reply
+    message(env, run, 90, "Anunt numarul 5, vezi https://example.com/5", mid=5)
+    assert "Ai folosit toate cele 5 promovări acceptate" in last_text(env)
 
 
-def test_unverified_member_cannot_post_any_ads_until_verified(env, run):
+def test_unverified_member_can_post_one_ad_until_verified(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
     message(env, run, 90, "Alt anunt, vezi https://example.com/2", mid=2)
-    assert member_deletions(env) == [1, 2]
-    assert last_text(env) == (
-        "🚫 Promovările sunt interzise utilizatorilor neverificați.\n"
-        "📹 Trimite videoclipul de verificare în privat la @approape_ro."
-    )
-    assert run(env.store.recent_ad_count(G, 90, 24)) == 0
+    assert member_deletions(env) == [2]
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 1
+    assert any("trimite la @approape_ro un video" in c.args[1] for c in env.bot.send_message.call_args_list)
 
-
-def test_neverifica_blocks_all_ads_until_verified_again(env, run):
+def test_neverifica_returns_member_to_one_ad_per_day(env, run):
     posting_member(env, run, 90)
     group_command(env, run, ADMIN_ID, "/verifica 90", handler=bot.cmd_verify)
     group_command(env, run, ADMIN_ID, "/neverifica", reply_to_uid=90, handler=bot.cmd_verify)
     for mid in (1, 2):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
-    assert member_deletions(env) == [1, 2]
-    assert last_text(env) == (
-        "🚫 Promovările sunt interzise utilizatorilor neverificați.\n"
-        "📹 Trimite videoclipul de verificare în privat la @approape_ro."
-    )
+    assert member_deletions(env) == [2]
+    assert any("trimite la @approape_ro un video" in c.args[1] for c in env.bot.send_message.call_args_list)
 
 
 def test_verifica_announces_her_in_the_group_for_good(env, run):
@@ -810,22 +791,21 @@ def test_reclama_counts_a_missed_ad_and_the_verified_daily_limit_applies(env, ru
     verified_member(env, run, 90)
     message(env, run, 90, MISSED_AD, mid=29)  # group_command replies to message 29
     group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad)
-    assert "1/3 promovări" in env.bot.send_message.call_args.args[1]
-    message(env, run, 90, "Anunt numarul 2, vezi https://example.com/2", mid=31)
-    message(env, run, 90, "Anunt numarul 3, vezi https://example.com/3", mid=32)
-    message(env, run, 90, "Anunt numarul 4, vezi https://example.com/4", mid=33)
-    assert member_deletions(env) == [33]
+    assert "1/5 promovări" in env.bot.send_message.call_args.args[1]
+    for mid in range(2, 7):
+        message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=30 + mid)
+    assert member_deletions(env) == [36]
     assert events(env, run, 90) == ["ad_marked", "delete"]
 
 
-def test_reclama_deletes_the_ad_when_verified_member_has_used_three(env, run):
+def test_reclama_deletes_the_ad_when_verified_member_has_used_five(env, run):
     verified_member(env, run, 90)
-    for mid in (1, 2, 3):
+    for mid in (1, 2, 3, 4, 5):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
     message(env, run, 90, MISSED_AD, mid=29)
     group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad)
     assert member_deletions(env) == [29]
-    assert any("ai atins limita de 3 promovări pe zi" in c.args[1] for c in env.bot.send_message.call_args_list)
+    assert any("ai atins limita de 5 promovări pe zi" in c.args[1] for c in env.bot.send_message.call_args_list)
 
 
 def test_reclama_on_an_ad_already_counted_changes_nothing(env, run):
@@ -883,7 +863,8 @@ def test_ads_detected_by_content_are_blocked_for_unverified_members(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Hei! Show web doar pentru tine, sexting", mid=1)
     message(env, run, 90, "Canal privat pe Snapchat, scrie-mi", mid=2)
-    assert member_deletions(env) == [1, 2]
+    assert member_deletions(env) == [2]
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 1
 
 
 def test_short_hints_are_ads_only_from_unverified_members(env, run):
@@ -891,7 +872,8 @@ def test_short_hints_are_ads_only_from_unverified_members(env, run):
     verified_member(env, run, 91)
     message(env, run, 90, "libera la webb", mid=1)
     message(env, run, 91, "libera la webb", mid=2)
-    assert member_deletions(env) == [1]
+    assert member_deletions(env) == []
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 1
     assert run(env.store.recent_ad_count(G, 91, 24)) == 0
 
 
@@ -900,7 +882,8 @@ def test_custom_emoji_layout_counts_as_an_ad(env, run):
     emoji = [{"type": "custom_emoji", "offset": i, "length": 1, "custom_emoji_id": str(i)} for i in range(5)]
     message(env, run, 90, "abcde Hai la mine", mid=1, entities=emoji)
     message(env, run, 90, "Vezi https://example.com/1", mid=2)
-    assert member_deletions(env) == [1, 2]
+    assert member_deletions(env) == [2]
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 1
 
 
 def test_reclama_learns_the_ad_so_a_similar_one_from_anyone_counts(env, run):
@@ -998,13 +981,16 @@ def test_a_member_already_tagged_is_not_tagged_again(env, run):
     assert tags(env) == []
 
 
-def test_every_message_of_a_tagged_unverified_member_is_an_ad(env, run):
+def test_tagged_unverified_member_gets_one_ad_and_video_verification_reply(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Salut tuturor", mid=1, sender_tag="Reclamă neverif.")
-    assert member_deletions(env) == [1]
-    assert last_text(env).startswith("🚫 Promovările sunt interzise utilizatorilor neverificați.")
-    assert muted_until_lifted(env, 90)
-
+    assert member_deletions(env) == []
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 1
+    assert any("trimite la @approape_ro un video" in c.args[1] for c in env.bot.send_message.call_args_list)
+    assert any(c.kwargs.get("reply_to_message_id") == 1 for c in env.bot.send_message.call_args_list)
+    message(env, run, 90, "Încă o promovare https://example.com/2", mid=2, sender_tag="Reclamă neverif.")
+    assert member_deletions(env) == [2]
+    assert not muted_until_lifted(env, 90)
 
 def test_a_verified_member_still_tagged_unverified_posts_normally(env, run):
     verified_member(env, run, 90)
@@ -1013,13 +999,12 @@ def test_a_verified_member_still_tagged_unverified_posts_normally(env, run):
     assert run(env.store.recent_ad_count(G, 90, 24)) == 0
 
 
-def test_a_top_girl_posts_without_limit_and_keeps_her_tag(env, run):
+def test_top_girl_can_post_ten_ads_but_not_eleven_and_keeps_her_tag(env, run):
     posting_member(env, run, 90)
-    for mid in range(1, 6):
+    for mid in range(1, 12):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid, sender_tag="Top Girl")
-    assert member_deletions(env) == []
+    assert member_deletions(env) == [11]
     assert tags(env) == []
-
 
 def test_verifica_and_neverifica_set_the_tag(env, run):
     posting_member(env, run, 90)
@@ -1041,7 +1026,7 @@ def test_a_refused_tag_does_not_stop_moderation(env, run):
     env.bot.do_api_request = AsyncMock(side_effect=bot.Forbidden("not enough rights to manage tags"))
     message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
     message(env, run, 90, "Alt anunt, vezi https://example.com/2", mid=2)
-    assert member_deletions(env) == [1, 2]
+    assert member_deletions(env) == [2]
 
 
 # ---- /start menu --------------------------------------------------------
@@ -1088,33 +1073,36 @@ def test_menu_back_shows_the_menu_again(env, run):
 
 
 # ---- /info and /unlock ----------------------------------------------------
-def test_info_shows_her_ads_and_invites(env, run):
+def test_info_shows_unverified_daily_limit_and_invites(env, run):
     posting_member(env, run, 90)
-    message(env, run, 90, AD, mid=1)
-    message(env, run, 90, AD, mid=2)
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
+    message(env, run, 90, "Alt anunt, vezi https://example.com/2", mid=2)
     group_command(env, run, ADMIN_ID, "/info", reply_to_uid=90, handler=bot.cmd_info)
     text = last_text(env)
-    for part in ("A adus: 0", "Promovări: interzise până la verificare",
+    for part in ("A adus: 0", "Neverificată: 1 promovare în 24h", "Promovări (24h): 1/1",
                  "Stickere (24h): statice 0/2 · animate 0/2",
                  "Abateri (48h): 0 → următoarea: ștergere"):
         assert part in text, part
+    assert member_deletions(env) == [2]
 
+def test_info_shows_verified_limit_of_five(env, run):
+    verified_member(env, run, 94)
+    group_command(env, run, ADMIN_ID, "/info", reply_to_uid=94, handler=bot.cmd_info)
+    assert "Verificată: 5 promovări în 24h" in last_text(env)
 
-def test_info_says_unverified_member_can_chat_but_not_advertise(env, run):
+def test_info_shows_unverified_member_can_chat_with_one_ad_limit(env, run):
     posting_member(env, run, 91)
     group_command(env, run, ADMIN_ID, "/info", reply_to_uid=91, handler=bot.cmd_info)
-    assert "⛔ Promovările sunt interzise până la verificare; mesajele normale sunt permise." in last_text(env)
+    assert "Neverificată: 1 promovare în 24h" in last_text(env)
 
-
-def test_info_says_when_ads_are_allowed_again_and_lists_the_block(env, run):
+def test_info_says_when_unverified_limit_is_reached(env, run):
     posting_member(env, run, 92)
     for mid in (1, 2):
-        message(env, run, 92, AD, mid=mid)
+        message(env, run, 92, f"Anunt, vezi https://example.com/{mid}", mid=mid)
     group_command(env, run, ADMIN_ID, "/info", reply_to_uid=92, handler=bot.cmd_info)
     text = last_text(env)
-    assert "⛔ Promovările sunt interzise până la verificare; mesajele normale sunt permise." in text
-    assert "Ultimele acțiuni:" in text and "șters: promovări: utilizator neverificat" in text
-
+    assert "Neverificată: 1 promovare în 24h" in text
+    assert "Ultimele acțiuni:" in text and "șters: promovări: limita 1/24h" in text
 
 def test_info_shows_a_mute_with_its_end(env, run):
     posting_member(env, run, 93)
@@ -1168,7 +1156,7 @@ def reminders_sent(env, uid):
 
 
 def test_ad_reminder_waits_until_the_limit_lifts(env, run):
-    hit_ad_limit(env, run, 50, hours_ago=1, ads_still_in_window=3)
+    hit_ad_limit(env, run, 50, hours_ago=1, ads_still_in_window=5)
     run(bot.run_ad_reminders(env.bot))
     assert reminders_sent(env, 50) == 0
 
@@ -1264,27 +1252,27 @@ def unmute_update(env, uid, text):
     return upd, SimpleNamespace(bot=env.bot, args=[], matches=[re.match(bot.UNMUTE_RE, text)])
 
 
-def test_an_untagged_unverified_ad_is_deleted_without_a_mute(env, run):
+def test_untagged_unverified_member_can_post_one_ad_per_day(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
-    assert member_deletions(env) == [1]
+    message(env, run, 90, "Alt anunt, vezi https://example.com/2", mid=2)
+    assert member_deletions(env) == [2]
     env.bot.restrict_chat_member.assert_not_awaited()
     assert events(env, run, 90) == ["delete"]
 
-
-def test_a_tagged_unverified_post_is_deleted_and_she_is_muted_until_an_admin_lifts_it(env, run):
+def test_tagged_unverified_member_is_not_muted_after_daily_limit(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, sender_tag="Reclamă neverif.")
-    assert member_deletions(env) == [1]
-    assert muted_until_lifted(env, 90)
-    assert events(env, run, 90) == ["delete", "mute"]
-
+    message(env, run, 90, "Alt anunt, vezi https://example.com/2", mid=2, sender_tag="Reclamă neverif.")
+    assert member_deletions(env) == [2]
+    assert not muted_until_lifted(env, 90)
+    assert events(env, run, 90) == ["delete"]
 
 def test_a_verified_member_over_the_ad_limit_is_not_muted(env, run):
     verified_member(env, run, 90)
-    for mid in range(1, 5):
+    for mid in range(1, 7):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
-    assert member_deletions(env) == [4]
+    assert member_deletions(env) == [6]
     env.bot.restrict_chat_member.assert_not_awaited()
 
 
@@ -1312,13 +1300,12 @@ def test_an_admin_cannot_be_muted(env, run):
 
 def test_unmute_by_username_in_private_lifts_the_mute(env, run):
     run(env.store.add_member(G, SimpleNamespace(id=90, username="Ana_90", first_name="Ana"), unlocked=True))
-    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, username="Ana_90",
-            sender_tag="Reclamă neverif.")
+    run(bot.mute_member(env.bot, 90, "test mute"))
     assert muted_until_lifted(env, 90)
     upd, ctx = unmute_update(env, ADMIN_ID, "unmute @ana_90")
     run(bot.cmd_unmute(upd, ctx))
     assert env.bot.posting_unlocked(90)
-    assert events(env, run, 90) == ["delete", "mute", "unlock"]
+    assert events(env, run, 90) == ["mute", "unlock"]
 
 
 def test_unmute_of_an_unknown_username_says_so(env, run):
@@ -1335,8 +1322,9 @@ def test_unmute_from_a_non_admin_goes_to_support_like_any_message(env, run):
     env.bot.restrict_chat_member.assert_not_awaited()
 
 
-def test_verifica_lifts_the_mute_an_unverified_ad_earned(env, run):
+def test_verifica_lifts_a_manual_mute_and_sets_verified_tier(env, run):
     posting_member(env, run, 90)
-    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, sender_tag="Reclamă neverif.")
+    run(bot.mute_member(env.bot, 90, "test"))
     group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
     assert env.bot.posting_unlocked(90)
+    assert run(env.store.is_verified(G, 90))

@@ -739,7 +739,7 @@ def test_neverifica_returns_member_to_one_ad_per_day(env, run):
     for mid in (1, 2):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
     assert member_deletions(env) == [2]
-    assert "trimite la @approape_ro un video" in last_text(env)
+    assert any("trimite la @approape_ro un video" in c.args[1] for c in env.bot.send_message.call_args_list)
 
 
 def test_verifica_announces_her_in_the_group_for_good(env, run):

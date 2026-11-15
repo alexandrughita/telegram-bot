@@ -49,7 +49,7 @@ AD_REMINDER_EVERY_DAYS = 7  # at most one reminder a week
 # Telegram member tags: at most 16 characters, no emoji.
 VERIFIED_TAG = "Verificată"
 UNVERIFIED_TAG = "Reclamă neverif."
-# Set by hand by an admin in Telegram; she may post as much as she likes, like the whitelist.
+# Set by hand by an admin in Telegram; the tag grants a 10-promotions-per-24h tier.
 TOP_GIRL_TAG = "Top Girl"
 # Static and animated/video stickers are counted separately, 2 of each per day.
 STICKERS_PER_DAY = 2
@@ -937,7 +937,7 @@ async def cmd_verify(update, context):
         if await store.remove_verified(GROUP_CHAT_ID, user_id):
             await store.log_event(GROUP_CHAT_ID, user_id, "unverify", f"de {update.effective_user.id}")
             await set_tag(bot, user_id, UNVERIFIED_TAG)
-            lines.append(f"{name} nu mai e verificată: promovările sunt interzise până la verificare.")
+            lines.append(f"{name} nu mai e verificată: poate posta 1 promovare în 24h până la verificare.")
         else:
             lines.append(f"{name} nu era verificată.")
     await admin_reply(update, bot, "\n".join(lines) + missing)

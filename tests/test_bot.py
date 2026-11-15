@@ -716,9 +716,9 @@ def test_verified_member_may_post_three_ads_a_day(env, run):
     posting_member(env, run, 90)
     group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
     assert run(env.store.is_verified(G, 90))
-    for mid in range(1, 5):
+    for mid in range(1, 7):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
-    assert member_deletions(env) == [4]
+    assert member_deletions(env) == [6]
     assert "ai atins limita de 3 promovări pe zi" in last_text(env)
     assert "video" not in last_text(env)  # already verified: nothing to offer
     assert bot.REAL_MESSAGES_NOTE in last_text(env)
@@ -998,13 +998,16 @@ def test_a_member_already_tagged_is_not_tagged_again(env, run):
     assert tags(env) == []
 
 
-def test_every_message_of_a_tagged_unverified_member_is_an_ad(env, run):
+def test_tagged_unverified_member_gets_one_ad_and_video_verification_reply(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Salut tuturor", mid=1, sender_tag="Reclamă neverif.")
-    assert member_deletions(env) == [1]
-    assert last_text(env).startswith("🚫 Promovările sunt interzise utilizatorilor neverificați.")
-    assert muted_until_lifted(env, 90)
-
+    assert member_deletions(env) == []
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 1
+    assert "trimite la @approape_ro un video" in last_text(env)
+    assert env.bot.send_message.call_args.kwargs.get("reply_to_message_id") == 1
+    message(env, run, 90, "Încă o promovare https://example.com/2", mid=2, sender_tag="Reclamă neverif.")
+    assert member_deletions(env) == [2]
+    assert not muted_until_lifted(env, 90)
 
 def test_a_verified_member_still_tagged_unverified_posts_normally(env, run):
     verified_member(env, run, 90)
@@ -1013,13 +1016,12 @@ def test_a_verified_member_still_tagged_unverified_posts_normally(env, run):
     assert run(env.store.recent_ad_count(G, 90, 24)) == 0
 
 
-def test_a_top_girl_posts_without_limit_and_keeps_her_tag(env, run):
+def test_top_girl_can_post_ten_ads_but_not_eleven_and_keeps_her_tag(env, run):
     posting_member(env, run, 90)
-    for mid in range(1, 6):
+    for mid in range(1, 12):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid, sender_tag="Top Girl")
-    assert member_deletions(env) == []
+    assert member_deletions(env) == [11]
     assert tags(env) == []
-
 
 def test_verifica_and_neverifica_set_the_tag(env, run):
     posting_member(env, run, 90)
@@ -1088,33 +1090,36 @@ def test_menu_back_shows_the_menu_again(env, run):
 
 
 # ---- /info and /unlock ----------------------------------------------------
-def test_info_shows_her_ads_and_invites(env, run):
+def test_info_shows_unverified_daily_limit_and_invites(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, AD, mid=1)
     message(env, run, 90, AD, mid=2)
     group_command(env, run, ADMIN_ID, "/info", reply_to_uid=90, handler=bot.cmd_info)
     text = last_text(env)
-    for part in ("A adus: 0", "Promovări: interzise până la verificare",
+    for part in ("A adus: 0", "Neverificată: 1 promovare în 24h", "Promovări (24h): 1/1",
                  "Stickere (24h): statice 0/2 · animate 0/2",
                  "Abateri (48h): 0 → următoarea: ștergere"):
         assert part in text, part
+    assert member_deletions(env) == [2]
 
+def test_info_shows_verified_limit_of_five(env, run):
+    verified_member(env, run, 94)
+    group_command(env, run, ADMIN_ID, "/info", reply_to_uid=94, handler=bot.cmd_info)
+    assert "Verificată: 5 promovări în 24h" in last_text(env)
 
-def test_info_says_unverified_member_can_chat_but_not_advertise(env, run):
+def test_info_shows_unverified_member_can_chat_with_one_ad_limit(env, run):
     posting_member(env, run, 91)
     group_command(env, run, ADMIN_ID, "/info", reply_to_uid=91, handler=bot.cmd_info)
-    assert "⛔ Promovările sunt interzise până la verificare; mesajele normale sunt permise." in last_text(env)
+    assert "Neverificată: 1 promovare în 24h" in last_text(env)
 
-
-def test_info_says_when_ads_are_allowed_again_and_lists_the_block(env, run):
+def test_info_says_when_unverified_limit_is_reached(env, run):
     posting_member(env, run, 92)
     for mid in (1, 2):
         message(env, run, 92, AD, mid=mid)
     group_command(env, run, ADMIN_ID, "/info", reply_to_uid=92, handler=bot.cmd_info)
     text = last_text(env)
-    assert "⛔ Promovările sunt interzise până la verificare; mesajele normale sunt permise." in text
-    assert "Ultimele acțiuni:" in text and "șters: promovări: utilizator neverificat" in text
-
+    assert "Neverificată: 1 promovare în 24h" in text
+    assert "Ultimele acțiuni:" in text and "șters: promovări: limita 1/24h" in text
 
 def test_info_shows_a_mute_with_its_end(env, run):
     posting_member(env, run, 93)
@@ -1264,21 +1269,21 @@ def unmute_update(env, uid, text):
     return upd, SimpleNamespace(bot=env.bot, args=[], matches=[re.match(bot.UNMUTE_RE, text)])
 
 
-def test_an_untagged_unverified_ad_is_deleted_without_a_mute(env, run):
+def test_untagged_unverified_member_can_post_one_ad_per_day(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
-    assert member_deletions(env) == [1]
+    message(env, run, 90, "Alt anunt, vezi https://example.com/2", mid=2)
+    assert member_deletions(env) == [2]
     env.bot.restrict_chat_member.assert_not_awaited()
     assert events(env, run, 90) == ["delete"]
 
-
-def test_a_tagged_unverified_post_is_deleted_and_she_is_muted_until_an_admin_lifts_it(env, run):
+def test_tagged_unverified_member_is_not_muted_after_daily_limit(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, sender_tag="Reclamă neverif.")
-    assert member_deletions(env) == [1]
-    assert muted_until_lifted(env, 90)
-    assert events(env, run, 90) == ["delete", "mute"]
-
+    message(env, run, 90, "Alt anunt, vezi https://example.com/2", mid=2, sender_tag="Reclamă neverif.")
+    assert member_deletions(env) == [2]
+    assert not muted_until_lifted(env, 90)
+    assert events(env, run, 90) == ["delete"]
 
 def test_a_verified_member_over_the_ad_limit_is_not_muted(env, run):
     verified_member(env, run, 90)

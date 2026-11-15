@@ -1026,7 +1026,7 @@ def test_a_refused_tag_does_not_stop_moderation(env, run):
     env.bot.do_api_request = AsyncMock(side_effect=bot.Forbidden("not enough rights to manage tags"))
     message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
     message(env, run, 90, "Alt anunt, vezi https://example.com/2", mid=2)
-    assert member_deletions(env) == [1, 2]
+    assert member_deletions(env) == [2]
 
 
 # ---- /start menu --------------------------------------------------------

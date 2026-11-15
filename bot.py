@@ -542,7 +542,8 @@ async def handle_ad(bot, message):
         await delete_ad(bot, message, reason)
         await store.set_time(f"ad_limit:{GROUP_CHAT_ID}:{user.id}", datetime.now(timezone.utc))
         again = f"Poți posta din nou {friendly_when(retry, datetime.now(timezone.utc))}."
-        notice = (f"⛔ {user.mention_html()}, ai atins limita de {limit} promovări pe zi. {again}"
+        unit = "promovare" if limit == 1 else "promovări"
+        notice = (f"⛔ {user.mention_html()}, ai atins limita de {limit} {unit} pe zi. {again}"
                   f"\n\n{REAL_MESSAGES_NOTE}")
         await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS)
         return False

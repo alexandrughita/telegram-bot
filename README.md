@@ -31,24 +31,12 @@ bot's private chat.
   (`AD_KEYWORDS` in `moderation.py`: show web, sexting, dick rating, canal/grup privat,
   Snapchat, OnlyFans, "mesaj în privat", "scrie-mi aici"…, matched without diacritics,
   spaces or fancy fonts), or 5+ custom emoji in one message.
-- **Ads: unverified members cannot post any ads.** Every detected ad from an unverified
-  member is deleted immediately, including the first one, with this notice:
-  `🚫 Promovările sunt interzise utilizatorilor neverificați.` and
-  `📹 Trimite videoclipul de verificare în privat la @approape_ro.` The video is sent to
-  @approape_ro in a private chat; the bot does not tell the sender what the video must
-  contain. After an admin runs `/verifica`, she may post up to 3 ads per 24 hours. A
-  detected ad is a message with a link outside approape.ro, the same text (≥ 15 characters
-  after normalising) posted again within 24 hours, a reworded copy (≥ 25 characters,
-  ~75% alike; "fancy font" letters count as plain ones), an ad detected by its content, or
-  a qualifying forward of recent text posted in the group. Verified members are blocked on
-  their fourth ad in the 24-hour window. Rejected ads are not violations. A week after a
-  verified member hits the daily limit, she gets a private reminder when the limit has lifted.
-- **Tagged "Reclamă neverif.": every message is an ad.** Once she carries that tag and is
-  not verified, anything she posts is deleted with the same notice and she is muted until an
-  admin lifts it, or runs `/verifica`.
-  Links to approape.ro are still allowed.
-- **Selling phrases from unverified members are ads.** Whole words, diacritics and fancy fonts
-  ignored: `web`/`webb`, `băiat/domn serios`, `vând content/clipuri/poze`, `ofer (un) clip(uri)`, `ofer poze`,
+- **Promotion limits are rolling 24-hour limits:** members tagged **Reclamă neverif.** (or not yet verified) may post **1 promotion per 24 hours**. After the first accepted promotion, the bot replies to that post with instructions to send a video privately to @approape_ro saying her name and the group name. Further promotions inside the same 24-hour window are deleted; she is not muted just for reaching this limit.
+- After an admin runs `/verifica`, she may post **5 promotions per 24 hours**. Members manually tagged **Top Girl** may post **10 promotions per 24 hours**; this tag is preserved by the bot. The next promotion after each tier's limit is deleted with the same "ai atins limita…" notice. Rejected ads are not violations.
+- A detected ad is a message with a link outside approape.ro, the same text (≥ 15 characters after normalising) posted again within 24 hours, a reworded copy (≥ 25 characters, ~75% alike; "fancy font" letters count as plain ones), an ad detected by its content, or a qualifying forward of recent text posted in the group.
+- A week after a verified member hits the daily limit, she gets a private reminder when the limit has lifted.
+- **Tagged "Reclamă neverif.": every message is treated as a promotion.** The first one in 24 hours is allowed; later ones are deleted until the rolling window resets. The tag itself does not cause a mute.
+- **Selling phrases from unverified members are ads.** Whole words, diacritics and fancy fonts ignored: `web`/`webb`, `băiat/domn serios`, `vând content/clipuri/poze`, `ofer (un) clip(uri)`, `ofer poze`,
   `grup(uri) privat(e)`, `sexting`, `porno`, `pachete` ("libera la webb", "caut un baiat serios in privat").
   Clients are unverified too, so words they use (`liberă`, `pv`, `în privat`) are not on the list.
   Verified members may use them.
@@ -142,7 +130,7 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
 | `/unlock` | group (reply or id) or private (id) | admins — lifts a mute; unlike `/whitelist`, every other rule still applies |
 | `/promovare [cuvinte, …]` (or `/reclama`) | group, as a reply (or just the words) | admins — counts the message as her ad, learns its text; words become keywords |
 | `/nupromovare [cuvinte, …]` (or `/nureclama`) | group (reply or words) or private (words) | admins — forgets learned texts / keywords; alone, lists them |
-| `/verifica`, `/neverifica` | group (reply, or a list of @usernames / ids) or private (list) | admins — `/verifica` allows up to 3 ads per 24 hours and sets the **Verificată** tag; `/neverifica` blocks all ads until verification again. A @username works only for members the bot has seen in the group |
+| `/verifica`, `/neverifica` | group (reply, or a list of @usernames / ids) or private (list) | admins — `/verifica` allows 5 ads per 24 hours and sets the **Verificată** tag; `/neverifica` returns her to the 1-ad unverified tier. A @username works only for members the bot has seen in the group |
 | `/ban` | group (reply or id) or private (id) | admins — bans her and deletes her messages |
 | `/chatid` | anywhere | group admins / anyone in private |
 

@@ -730,7 +730,7 @@ def test_unverified_member_can_post_one_ad_until_verified(env, run):
     message(env, run, 90, "Alt anunt, vezi https://example.com/2", mid=2)
     assert member_deletions(env) == [2]
     assert run(env.store.recent_ad_count(G, 90, 24)) == 1
-    assert "trimite la @approape_ro un video" in last_text(env)
+    assert any("trimite la @approape_ro un video" in c.args[1] for c in env.bot.send_message.call_args_list)
 
 def test_neverifica_returns_member_to_one_ad_per_day(env, run):
     posting_member(env, run, 90)

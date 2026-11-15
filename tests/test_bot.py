@@ -399,7 +399,7 @@ def test_a_lookalike_domain_is_not_approape(env, run):
     for mid in (1, 2):
         message(env, run, 90, "Vezi https://approape.ro.example.com/x", mid=mid)
     assert member_deletions(env) == [2]
-    assert "ai atins limita de 1 promovări pe zi" in last_text(env)
+    assert "ai atins limita de 1 promovare pe zi" in last_text(env)
 
 
 def test_stickers_arriving_together_are_still_limited(env, run):

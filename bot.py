@@ -706,7 +706,7 @@ async def on_group_message(update, context):
                 # First unverified promotion is allowed; reply directly with the video-verification path.
                 await send_temporary(
                     bot, GROUP_CHAT_ID,
-                    "📹 Pentru a te promova în continuare, trimite la @approape_ro un video "
+                    f"📹 {user.mention_html()}, pentru a te promova în continuare, trimite la @approape_ro un video "
                     "în care spui numele tău și numele grupului.",
                     NOTICE_TTL_SECONDS, reply_to_message_id=message.message_id,
                 )

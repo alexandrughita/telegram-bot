@@ -791,9 +791,9 @@ def test_reclama_counts_a_missed_ad_and_the_verified_daily_limit_applies(env, ru
     message(env, run, 90, MISSED_AD, mid=29)  # group_command replies to message 29
     group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad)
     assert "1/5 promovări" in env.bot.send_message.call_args.args[1]
-    for mid in range(2, 6):
+    for mid in range(2, 7):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=30 + mid)
-    assert member_deletions(env) == [35]
+    assert member_deletions(env) == [36]
     assert events(env, run, 90) == ["ad_marked", "delete"]
 
 
@@ -1071,8 +1071,8 @@ def test_menu_back_shows_the_menu_again(env, run):
 # ---- /info and /unlock ----------------------------------------------------
 def test_info_shows_unverified_daily_limit_and_invites(env, run):
     posting_member(env, run, 90)
-    message(env, run, 90, AD, mid=1)
-    message(env, run, 90, AD, mid=2)
+    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
+    message(env, run, 90, "Alt anunt, vezi https://example.com/2", mid=2)
     group_command(env, run, ADMIN_ID, "/info", reply_to_uid=90, handler=bot.cmd_info)
     text = last_text(env)
     for part in ("A adus: 0", "Neverificată: 1 promovare în 24h", "Promovări (24h): 1/1",
@@ -1094,7 +1094,7 @@ def test_info_shows_unverified_member_can_chat_with_one_ad_limit(env, run):
 def test_info_says_when_unverified_limit_is_reached(env, run):
     posting_member(env, run, 92)
     for mid in (1, 2):
-        message(env, run, 92, AD, mid=mid)
+        message(env, run, 92, f"Anunt, vezi https://example.com/{mid}", mid=mid)
     group_command(env, run, ADMIN_ID, "/info", reply_to_uid=92, handler=bot.cmd_info)
     text = last_text(env)
     assert "Neverificată: 1 promovare în 24h" in text

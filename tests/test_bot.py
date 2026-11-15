@@ -881,7 +881,8 @@ def test_custom_emoji_layout_counts_as_an_ad(env, run):
     emoji = [{"type": "custom_emoji", "offset": i, "length": 1, "custom_emoji_id": str(i)} for i in range(5)]
     message(env, run, 90, "abcde Hai la mine", mid=1, entities=emoji)
     message(env, run, 90, "Vezi https://example.com/1", mid=2)
-    assert member_deletions(env) == [1, 2]
+    assert member_deletions(env) == [2]
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 1
 
 
 def test_reclama_learns_the_ad_so_a_similar_one_from_anyone_counts(env, run):
@@ -1154,7 +1155,7 @@ def reminders_sent(env, uid):
 
 
 def test_ad_reminder_waits_until_the_limit_lifts(env, run):
-    hit_ad_limit(env, run, 50, hours_ago=1, ads_still_in_window=3)
+    hit_ad_limit(env, run, 50, hours_ago=1, ads_still_in_window=5)
     run(bot.run_ad_reminders(env.bot))
     assert reminders_sent(env, 50) == 0
 

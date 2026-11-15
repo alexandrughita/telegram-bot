@@ -862,7 +862,8 @@ def test_ads_detected_by_content_are_blocked_for_unverified_members(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Hei! Show web doar pentru tine, sexting", mid=1)
     message(env, run, 90, "Canal privat pe Snapchat, scrie-mi", mid=2)
-    assert member_deletions(env) == [1, 2]
+    assert member_deletions(env) == [2]
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 1
 
 
 def test_short_hints_are_ads_only_from_unverified_members(env, run):
@@ -870,7 +871,8 @@ def test_short_hints_are_ads_only_from_unverified_members(env, run):
     verified_member(env, run, 91)
     message(env, run, 90, "libera la webb", mid=1)
     message(env, run, 91, "libera la webb", mid=2)
-    assert member_deletions(env) == [1]
+    assert member_deletions(env) == []
+    assert run(env.store.recent_ad_count(G, 90, 24)) == 1
     assert run(env.store.recent_ad_count(G, 91, 24)) == 0
 
 
@@ -1318,8 +1320,9 @@ def test_unmute_from_a_non_admin_goes_to_support_like_any_message(env, run):
     env.bot.restrict_chat_member.assert_not_awaited()
 
 
-def test_verifica_lifts_the_mute_an_unverified_ad_earned(env, run):
+def test_verifica_lifts_a_manual_mute_and_sets_verified_tier(env, run):
     posting_member(env, run, 90)
-    message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1, sender_tag="Reclamă neverif.")
+    run(bot.mute_member(env.bot, 90, "test"))
     group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
     assert env.bot.posting_unlocked(90)
+    assert run(env.store.is_verified(G, 90))

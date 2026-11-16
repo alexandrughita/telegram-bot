@@ -31,7 +31,7 @@ bot's private chat.
   (`AD_KEYWORDS` in `moderation.py`: show web, sexting, dick rating, canal/grup privat,
   Snapchat, OnlyFans, "mesaj în privat", "scrie-mi aici"…, matched without diacritics,
   spaces or fancy fonts), or 5+ custom emoji in one message.
-- **Promotion limits are rolling 24-hour limits:** members tagged **Reclamă neverif.** (or not yet verified) may post **1 promotion per 24 hours**. After the first accepted promotion, the bot replies to that post with instructions to send a video privately to @approape_ro saying her name and the group name. Further promotions inside the same 24-hour window are deleted; she is not muted just for reaching this limit.
+- **Promotion limits are rolling 24-hour limits:** members tagged **Reclamă neverif.** (or not yet verified) may post **1 promotion per 24 hours**. After the first accepted promotion, the bot replies firmly: she has used her only unverified slot and must send a video privately to @approape_ro saying her name and the group name if she wants to continue promoting. Further promotions inside the same 24-hour window are deleted; she is not muted just for reaching this limit.
 - After an admin runs `/verifica`, she may post **5 promotions per 24 hours**. Members manually tagged **Top Girl** may post **10 promotions per 24 hours**; this tag is preserved by the bot. The next promotion after each tier's limit is deleted with the same "ai atins limita…" notice. Rejected ads are not violations.
 - A detected ad is a message with a link outside approape.ro, the same text (≥ 15 characters after normalising) posted again within 24 hours, a reworded copy (≥ 25 characters, ~75% alike; "fancy font" letters count as plain ones), an ad detected by its content, or a qualifying forward of recent text posted in the group.
 - A week after a verified member hits the daily limit, she gets a private reminder when the limit has lifted.
@@ -105,17 +105,26 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
   reason. A **reply** to it reaches her privately, for when it was not an ad. Telegram lets
   the bot write to her only if she has started the bot; otherwise tap her name and write yourself.
 
-**Scheduled posts** (2–3 a day, between 10:00 and 01:00 Bucharest time; quiet 01:00–10:00)
-- Profiles and questions alternate. For a profile, the bot tries in this order: a profile
-  created in the last 30 days, last week's most viewed profile (`/api/top-weekly`), or a
-  recommended one (claimed by its owner, recently updated). It posts the main photo, the
-  name, the city and a link tagged `utm_source=telegram`.
-- Only profiles the site lists in its sitemaps are posted, so the site's visibility rules
-  apply as they are; hidden, inactive and away profiles are skipped. A profile is not
-  repeated within 30 days, a question not within 14.
-- Questions are open questions or anonymous polls (`QUESTIONS` in `posts.py`).
-- The bot never posts if nobody has written in the group since its previous post.
+**Scheduled posts** (3 profile posts per Bucharest calendar day, target times 11:00, 16:00 and 21:00)
+- Every scheduled post is a profile from approape.ro; the bot no longer posts questions or polls.
+- At least one of the day's three profiles must have a WhatsApp-confirmed contact
+  (`whatsappConfirmed` in Firestore); its caption labels that contact clearly.
+- Selection prefers a new profile from the last 30 days, then last week's popular profile
+  (`/api/top-weekly`), then a recommended profile claimed by its owner and recently updated.
+- Only profiles currently listed in the site's sitemaps are eligible. Hidden, inactive,
+  deleted, banned, suspended, disabled and away profiles are skipped. A profile is not
+  repeated within 30 days.
+- If no eligible WhatsApp-confirmed profile is available, the bot waits and retries rather
+  than silently breaking the daily contact-confirmation requirement.
+- The bot still avoids posting into silence: a human must have written in the group since
+  the previous bot post. The three target slots are Bucharest local time.
 - Driven by `/tick`, see below. Every post is in the `bot_posts` table.
+
+**Telegram verification → site account growth**
+- When an admin runs `/verifica`, the bot prompts the member to create a free profile on
+  approape.ro, or update her existing profile and add her Telegram handle under
+  `Contul meu → Telegram`. It sends a private nudge where Telegram permissions allow,
+  and includes the same CTA in the group announcement.
 
 ## Commands
 

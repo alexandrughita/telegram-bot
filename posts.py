@@ -219,7 +219,7 @@ async def fetch_site_profiles(now):
         new = usable(await _query_escorts(client, 20, order_field="createdAt"))
         # Recommended: profiles their owners keep up to date, never imported ones.
         # Filtered here rather than in the query, which would need a composite index.
-        recommended = usable(await _query_escorts(client, 60, order_field="updatedAt"), claimed_only=True)
+        recommended = usable(await _query_escorts(client, 200, order_field="updatedAt"), claimed_only=True)
 
         top = None
         try:

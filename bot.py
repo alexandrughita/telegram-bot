@@ -55,8 +55,7 @@ TOP_GIRL_TAG = "Top Girl"
 STICKERS_PER_DAY = 2
 STICKER_WINDOW_HOURS = 24
 # Ends every note that deletes an ad or a sticker over the limit.
-REAL_MESSAGES_NOTE = ("Mai bine scrie-ne ceva: o întrebare, o recomandare sau o experiență de povestit. "
-                      "Mesajele adevărate țin grupul viu și aduc răspunsuri 🙂")
+REAL_MESSAGES_NOTE = ("Folosește grupul pentru conversații reale. Reclamele în plus nu-ți aduc un avantaj — doar dispar.")
 
 logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -328,10 +327,10 @@ async def invite_status(update, context):
     limit = await ad_limit(user.id)
     ad_rule = f"cel mult {limit} promovări în 24 de ore"
     await update.effective_message.reply_text(
-        f"✅ Poți posta în grup.\n\n"
-        f"Reguli: {ad_rule} (linkuri externe sau același text repetat), "
-        f"{STICKERS_PER_DAY} stickere pe zi și fără aceeași poză, link sau număr repostat.\n\n"
-        f"Vrei să aduci pe cineva? 🔗 Linkul tău:\n{link}\n👥 Ai adus: {count}",
+        f"🔥 Ești în joc. Acum joacă inteligent.\n\n"
+        f"Limita ta: {ad_rule}. Reclamele peste limită se șterg. "
+        f"Maximum {STICKERS_PER_DAY} stickere pe zi; fără duplicate de poze, linkuri sau numere.\n\n"
+        f"Vrei să crești grupul? Invită oameni cu linkul tău:\n{link}\n👥 Ai adus: {count}",
         disable_web_page_preview=True,
     )
 
@@ -498,7 +497,7 @@ async def ad_reminder_keyboard(bot):
 async def send_ad_reminder(bot, user_id):
     await bot.send_message(
         user_id,
-        "🎉 Poți posta din nou în grup!\n\nVrei să mergi în grup și să postezi?",
+        "⚡ Limita s-a resetat. Ai din nou promovările disponibile. Intră în grup și folosește-le cu cap — fiecare postare trebuie să conteze.",
         reply_markup=await ad_reminder_keyboard(bot),
     )
 
@@ -543,8 +542,9 @@ async def handle_ad(bot, message):
         await store.set_time(f"ad_limit:{GROUP_CHAT_ID}:{user.id}", datetime.now(timezone.utc))
         again = f"Poți posta din nou {friendly_when(retry, datetime.now(timezone.utc))}."
         unit = "promovare" if limit == 1 else "promovări"
-        notice = (f"⛔ {user.mention_html()}, ai atins limita de {limit} {unit} pe zi. {again}"
-                  f"\n\n{REAL_MESSAGES_NOTE}")
+        notice = (f"⛔ {user.mention_html()}, ai epuizat plafonul: {limit} {unit} în 24h. "
+                  f"Revii {friendly_when(retry, datetime.now(timezone.utc))}. "
+                  f"Orice reclamă înainte de reset se șterge. Fără negocieri.\n\n{REAL_MESSAGES_NOTE}")
         await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS)
         return False
 
@@ -638,8 +638,8 @@ async def on_group_message(update, context):
                                       message.message_id)
             await send_temporary(
                 bot, GROUP_CHAT_ID,
-                f"{user.mention_html()}, poți trimite cel mult {STICKERS_PER_DAY} promovări pe zi. "
-                f"{REAL_MESSAGES_NOTE}",
+                f"⛔ {user.mention_html()}, ai depășit limita de {STICKERS_PER_DAY} stickere în 24h. "
+                f"Următoarele se șterg. {REAL_MESSAGES_NOTE}",
                 NOTICE_TTL_SECONDS)
             return
 
@@ -703,18 +703,20 @@ async def on_group_message(update, context):
             )
             limit = await ad_limit(user.id, message)
             if not await store.is_verified(GROUP_CHAT_ID, user.id) and not is_top_girl(message):
-                # First unverified promotion is allowed; reply directly with the video-verification path.
+                # The first unverified promotion is the one allowed slot; use it to push verification firmly.
                 await send_temporary(
                     bot, GROUP_CHAT_ID,
-                    f"📹 {user.mention_html()}, pentru a te promova în continuare, trimite la @approape_ro un video "
-                    "în care spui numele tău și numele grupului.",
+                    f"🚨 {user.mention_html()}, ai folosit singura promovare disponibilă fără verificare. "
+                    "Vrei să continui? Atunci dovedește că tu ești cea care postează. "
+                    "Trimite ACUM în privat la @approape_ro un video în care spui numele tău și numele grupului. "
+                    "Până atunci ai doar 1 promovare în 24h. A doua reclamă va fi ștearsă. Fără excepții.",
                     NOTICE_TTL_SECONDS, reply_to_message_id=message.message_id,
                 )
             elif new_count >= limit:  # only the last allowed ad gets a reply
                 await send_temporary(
                     bot, GROUP_CHAT_ID,
-                    f"📣 {user.mention_html()}, promovarea a fost acceptată. "
-                    f"Ai folosit toate cele {limit} promovări acceptate în ultimele 24 de ore.",
+                    f"📣 {user.mention_html()}, ai folosit toate cele {limit} promovări disponibile în 24h. "
+                    "Ai avut acces. Acum aștepți resetarea limitei.",
                     NOTICE_TTL_SECONDS,
                 )
 
@@ -764,14 +766,6 @@ async def post_profile(bot, kind, profile):
         await bot.send_message(GROUP_CHAT_ID, caption, parse_mode="HTML")
 
 
-async def post_question(bot, index):
-    question = posts.QUESTIONS[index]
-    if "poll" in question:
-        await bot.send_poll(GROUP_CHAT_ID, question["poll"], question["options"], is_anonymous=True)
-    else:
-        await bot.send_message(GROUP_CHAT_ID, question["text"])
-
-
 async def run_ad_reminders(bot):
     """Tell her she can post again once the ad limit that blocked her lifts."""
     rows = await store.ad_limit_users(GROUP_CHAT_ID, AD_REMINDER_EVERY_DAYS + 1)
@@ -808,32 +802,38 @@ async def run_tick(bot):
     async with _tick_lock:
         await run_ad_reminders(bot)
         now = datetime.now(timezone.utc)
+        stats = await store.daily_post_stats(GROUP_CHAT_ID)
+        posted_today = stats["profiles"] or 0
+        confirmed_today = stats["contact_confirmed"] or 0
         next_at = await store.get_time("next_post_at")
         if next_at is None:
-            await store.set_time("next_post_at", posts.next_post_time(now))
+            await store.set_time("next_post_at", posts.next_post_time(now, posted_today))
             return
         last = await store.last_post(GROUP_CHAT_ID)
         last_human_at = await store.get_time("last_human_at")
         if not posts.due(now, next_at, last and last["posted_at"], last_human_at):
             return
-        kind = profile = None
-        if last is None or last["kind"] == "question":
-            try:
-                recent = await store.recent_post_refs(GROUP_CHAT_ID, posts.PROFILE_REPEAT_DAYS)
-                kind, profile = posts.pick_profile(*await posts.fetch_site_profiles(now), recent, now)
-            except Exception as exc:
-                log.warning("Could not read profiles from site: %s", exc)
-        if profile:
-            await post_profile(bot, kind, profile)
-            await store.record_post(GROUP_CHAT_ID, kind, profile.path, now)
-        else:
-            used = await store.recent_post_refs(GROUP_CHAT_ID, posts.QUESTION_REPEAT_DAYS, question=True)
-            priority_used = await store.recent_post_refs(GROUP_CHAT_ID, posts.PRIORITY_REPEAT_DAYS, question=True)
-            index = posts.pick_question(used, priority_used)
-            await post_question(bot, index)
-            await store.record_post(GROUP_CHAT_ID, "question", str(index), now)
-        await store.set_time("next_post_at", posts.next_post_time(now))
-
+        if posted_today >= posts.POSTS_PER_DAY:
+            await store.set_time("next_post_at", posts.next_post_time(now, posts.POSTS_PER_DAY))
+            return
+        try:
+            recent = await store.recent_post_refs(GROUP_CHAT_ID, posts.PROFILE_REPEAT_DAYS)
+            new, top, recommended = await posts.fetch_site_profiles(now)
+            kind, profile = posts.pick_profile(
+                new, top, recommended, recent, now, require_whatsapp=confirmed_today < 1)
+        except Exception as exc:
+            log.warning("Could not read profiles from site: %s", exc)
+            return
+        if not profile:
+            log.warning("No eligible %s profile available for today's Telegram spotlight",
+                        "WhatsApp-confirmed" if confirmed_today < 1 else "fresh")
+            # Retry later; never substitute a poll or a profile that breaks the contact rule.
+            await store.set_time("next_post_at", now + timedelta(minutes=20))
+            return
+        await post_profile(bot, kind, profile)
+        post_kind = f"whatsapp_{kind}" if profile.whatsapp_confirmed else kind
+        await store.record_post(GROUP_CHAT_ID, post_kind, profile.path, now)
+        await store.set_time("next_post_at", posts.next_post_time(now, posted_today + 1))
 
 async def cmd_chatid(update, context):
     chat = update.effective_chat
@@ -926,7 +926,27 @@ async def cmd_verify(update, context):
             except Exception as exc:
                 log.warning("Admin command not deleted from the group: %s", exc)
         verb = "a fost verificată" if len(targets) == 1 else "au fost verificate"
-        await bot.send_message(GROUP_CHAT_ID, f"🎥 {names} {verb}.", parse_mode="HTML")
+        site_push = (
+            "🔥 Ai confirmat că poți promova în grup. Următorul pas: construiește-ți prezența pe approape.ro.\n\n"
+            "Dacă nu ai încă profil, creează-l gratuit. Dacă ai deja unul, actualizează-l și adaugă Telegram-ul "
+            "în Contul meu → Telegram. Nu te limita la grup: fă-te ușor de găsit.\n"
+            "👉 https://www.aproape.ro/"
+        )
+        site_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
+            "🚀 Creează-ți profilul pe approape.ro", url="https://www.aproape.ro/"
+        )]])
+        await bot.send_message(
+            GROUP_CHAT_ID, f"🎥 {names} {verb}.\n\n{site_push}",
+            parse_mode="HTML", reply_markup=site_keyboard, disable_web_page_preview=True,
+        )
+        for user_id, _ in targets:
+            try:
+                await bot.send_message(user_id, site_push, reply_markup=site_keyboard,
+                                       disable_web_page_preview=True)
+            except Forbidden:
+                pass
+            except Exception as exc:
+                log.info("Could not send site-profile nudge to verified member %s: %s", user_id, exc)
         if update.effective_chat.type == "private":
             await message.reply_text(f"Gata, {names} {'poate' if len(targets) == 1 else 'pot'} posta "
                                      f"{VERIFIED_AD_LIMIT} promovări pe zi.{missing}", parse_mode="HTML")

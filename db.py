@@ -244,6 +244,15 @@ class Store:
     async def recent_post_refs(self,chat_id,days,question=False):
         rows=await self._all("""SELECT DISTINCT ref FROM bot_posts WHERE chat_id=%s AND (kind='question')=%s
             AND posted_at >= now() - %s * interval '1 day'""",(chat_id,question,days)); return {r["ref"] for r in rows}
+    async def daily_post_stats(self,chat_id):
+        """Profile posts and WhatsApp-confirmed profile posts since Bucharest midnight."""
+        return await self._one("""SELECT
+            COUNT(*) FILTER (WHERE kind <> 'question') AS profiles,
+            COUNT(*) FILTER (WHERE kind LIKE 'whatsapp_%') AS contact_confirmed
+            FROM bot_posts
+            WHERE chat_id=%s
+              AND posted_at >= (date_trunc('day', now() AT TIME ZONE 'Europe/Bucharest')
+                                AT TIME ZONE 'Europe/Bucharest')""",(chat_id,))
     async def record_post(self,chat_id,kind,ref,posted_at):
         await self._execute("INSERT INTO bot_posts(chat_id,kind,ref,posted_at) VALUES(%s,%s,%s,%s)",(chat_id,kind,ref,posted_at))
     async def cleanup(self,message_hours,violation_days=30):

@@ -262,7 +262,7 @@ def test_the_same_text_posted_again_the_same_day_is_deleted(env, run):
     message(env, run, 90, AD, mid=2)
     assert run(env.store.recent_ad_count(G, 90, 24)) == 1
     env.bot.delete_message.assert_not_awaited()
-    assert "trimite la @approape_ro un video" in last_text(env)
+    assert "Trimite ACUM în privat la @approape_ro un video" in last_text(env)
     assert run(env.store._one("SELECT COUNT(*) AS n FROM violations"))["n"] == 0
 
 
@@ -328,7 +328,7 @@ def test_two_animated_sticker_messages_a_day(env, run):
     message(env, run, 90, mid=3, sticker={**sticker, "file_unique_id": "st3", "is_animated": False, "is_video": True})
     env.bot.delete_message.assert_awaited_once_with(G, 3)
     notice = env.bot.send_message.call_args.args[1]
-    assert "2 promovări pe zi" in notice and "scrie-ne" in notice
+    assert "2 stickere în 24h" in notice and "se șterg" in notice
     assert events(env, run, 90) == ["delete"]  # not a violation: no warning, no mute
     assert run(env.store._one("SELECT COUNT(*) AS n FROM violations"))["n"] == 0
 
@@ -354,7 +354,7 @@ def test_two_static_stickers_a_day(env, run):
     message(env, run, 90, mid=3, sticker={**sticker, "file_unique_id": "st3"})
     env.bot.delete_message.assert_awaited_once_with(G, 3)
     notice = env.bot.send_message.call_args.args[1]
-    assert "2 promovări pe zi" in notice and "scrie-ne" in notice
+    assert "2 stickere în 24h" in notice and "se șterg" in notice
     assert events(env, run, 90) == ["delete"]  # not a violation: no warning, no mute
     assert run(env.store._one("SELECT COUNT(*) AS n FROM violations"))["n"] == 0
 
@@ -399,7 +399,7 @@ def test_a_lookalike_domain_is_not_approape(env, run):
     for mid in (1, 2):
         message(env, run, 90, "Vezi https://approape.ro.example.com/x", mid=mid)
     assert member_deletions(env) == [2]
-    assert "ai atins limita de 1 promovare pe zi" in last_text(env)
+    assert "ai epuizat plafonul: 1 promovare în 24h" in last_text(env)
 
 
 def test_stickers_arriving_together_are_still_limited(env, run):
@@ -573,8 +573,8 @@ class FakeHttp:
 
 @pytest.fixture
 def daytime(monkeypatch):
-    """Freeze 'now' at 14:00 in Bucharest and serve one recommended profile."""
-    now = datetime(2026, 10, 5, 14, 0, tzinfo=posts.LOCAL_TZ).astimezone(timezone.utc)
+    """Freeze 'now' at 14:00 Bucharest time and serve three distinct profiles, one WhatsApp-confirmed."""
+    now = datetime.now(posts.LOCAL_TZ).replace(hour=14, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
 
     class Clock(datetime):
         @classmethod
@@ -583,51 +583,42 @@ def daytime(monkeypatch):
 
     monkeypatch.setattr(bot, "datetime", Clock)
     monkeypatch.setattr(bot.httpx, "AsyncClient", FakeHttp)
-    rec = posts.Profile("/escorte/ana", "Ana", "Cluj", "https://x/ana.webp")
+    rec = posts.Profile("/escorte/ana", "Ana", "Cluj", "https://x/ana.webp", whatsapp_confirmed=True)
+    rec2 = posts.Profile("/escorte/bia", "Bia", "Iași", "https://x/bia.webp")
+    rec3 = posts.Profile("/creatoare/cora", "Cora", "Timișoara", "https://x/cora.webp")
 
     async def fake_site(_now):
-        return [], None, [rec]
+        return [], None, [rec, rec2, rec3]
     monkeypatch.setattr(posts, "fetch_site_profiles", fake_site)
     return now
 
 
-def test_tick_plans_first_then_posts_profile_then_question(env, run, daytime):
-    run(bot.run_tick(env.bot))  # first tick only plans
+def test_tick_posts_three_profiles_daily_and_one_has_confirmed_whatsapp(env, run, daytime):
+    run(bot.run_tick(env.bot))  # first tick plans the next slot
     env.bot.send_photo.assert_not_awaited()
-    run(env.store.set_time("next_post_at", daytime - timedelta(minutes=1)))
-    run(env.store.set_time("last_human_at", daytime - timedelta(minutes=5)))
 
-    run(bot.run_tick(env.bot))
-    photo = env.bot.send_photo.call_args
-    assert photo.kwargs["photo"] == b"webp-bytes" and "/escorte/ana" in photo.kwargs["caption"]
-    nxt = run(env.store.get_time("next_post_at"))
-    assert timedelta(hours=3) <= nxt - daytime <= timedelta(hours=6)
+    for _ in range(3):
+        run(env.store.set_time("next_post_at", daytime - timedelta(minutes=1)))
+        run(bot.run_tick(env.bot))
 
-    # Nobody has written since: the next due moment passes in silence.
-    run(env.store.set_time("next_post_at", daytime - timedelta(minutes=1)))
-    run(bot.run_tick(env.bot))
-    assert env.bot.send_photo.await_count == 1 and env.bot.send_message.await_count == 0
-    env.bot.send_poll.assert_not_awaited()
-
-    # Someone writes: the next post is a question, not another profile.
-    run(env.store.set_time("last_human_at", daytime + timedelta(seconds=1)))
-    run(bot.run_tick(env.bot))
-    assert env.bot.send_poll.await_count + env.bot.send_message.await_count == 1
-    kinds = run(env.store._all("SELECT kind FROM bot_posts ORDER BY id"))
-    assert [k["kind"] for k in kinds] == ["recommended", "question"]
+    assert env.bot.send_photo.await_count == 3
+    rows = run(env.store._all("SELECT kind, ref FROM bot_posts ORDER BY id"))
+    assert len(rows) == 3
+    assert len({row["ref"] for row in rows}) == 3
+    assert sum(row["kind"].startswith("whatsapp_") for row in rows) >= 1
+    assert env.bot.send_message.await_count == 0
 
 
 def test_profile_posted_recently_is_not_repeated(env, run, daytime):
-    # Ana was posted 2h ago and the last post was a question, so a profile is next.
     two_hours_ago = daytime - timedelta(hours=2)
-    run(env.store.record_post(G, "recommended", "/escorte/ana", two_hours_ago))
-    run(env.store.record_post(G, "question", "0", two_hours_ago))
+    run(env.store.record_post(G, "whatsapp_recommended", "/escorte/ana", two_hours_ago))
     run(env.store.set_time("next_post_at", daytime - timedelta(minutes=1)))
-    run(env.store.set_time("last_human_at", daytime))
 
     run(bot.run_tick(env.bot))
-    env.bot.send_photo.assert_not_awaited()  # ana is the only profile and was just posted
-    assert env.bot.send_poll.await_count + env.bot.send_message.await_count == 1
+    assert env.bot.send_photo.await_count == 1
+    assert "/escorte/ana" not in env.bot.send_photo.call_args.kwargs["caption"]
+    stats = run(env.store.daily_post_stats(G))
+    assert stats["profiles"] == 2 and stats["contact_confirmed"] == 1
 
 
 def test_group_message_marks_people_as_active(env, run):
@@ -707,7 +698,7 @@ def test_verified_member_may_post_five_ads_a_day(env, run):
     for mid in range(1, 7):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
     assert member_deletions(env) == [6]
-    assert "ai atins limita de 5 promovări pe zi" in last_text(env)
+    assert "ai epuizat plafonul: 5 promovări în 24h" in last_text(env)
     assert "video" not in last_text(env)  # already verified: nothing to offer
     assert bot.REAL_MESSAGES_NOTE in last_text(env)
     assert events(env, run, 90)[0] == "verify"
@@ -721,7 +712,7 @@ def test_only_the_last_allowed_ad_gets_an_accepted_reply(env, run):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
     assert not env.bot.send_message.called  # below the 5-ad limit: no reply
     message(env, run, 90, "Anunt numarul 5, vezi https://example.com/5", mid=5)
-    assert "Ai folosit toate cele 5 promovări acceptate" in last_text(env)
+    assert "ai folosit toate cele 5 promovări disponibile" in last_text(env)
 
 
 def test_unverified_member_can_post_one_ad_until_verified(env, run):
@@ -730,7 +721,7 @@ def test_unverified_member_can_post_one_ad_until_verified(env, run):
     message(env, run, 90, "Alt anunt, vezi https://example.com/2", mid=2)
     assert member_deletions(env) == [2]
     assert run(env.store.recent_ad_count(G, 90, 24)) == 1
-    assert any("trimite la @approape_ro un video" in c.args[1] for c in env.bot.send_message.call_args_list)
+    assert any("Trimite ACUM în privat la @approape_ro un video" in c.args[1] for c in env.bot.send_message.call_args_list)
 
 def test_neverifica_returns_member_to_one_ad_per_day(env, run):
     posting_member(env, run, 90)
@@ -739,15 +730,18 @@ def test_neverifica_returns_member_to_one_ad_per_day(env, run):
     for mid in (1, 2):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
     assert member_deletions(env) == [2]
-    assert any("trimite la @approape_ro un video" in c.args[1] for c in env.bot.send_message.call_args_list)
+    assert any("Trimite ACUM în privat la @approape_ro un video" in c.args[1] for c in env.bot.send_message.call_args_list)
 
 
 def test_verifica_announces_her_in_the_group_for_good(env, run):
     posting_member(env, run, 90)
     group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
     env.bot.delete_message.assert_any_await(G, COMMAND_MID)
-    announce = env.bot.send_message.call_args
-    assert announce.args[0] == G and "a fost verificată" in announce.args[1]
+    group_announce = next(c for c in env.bot.send_message.call_args_list if c.args[0] == G)
+    private_nudge = next(c for c in env.bot.send_message.call_args_list if c.args[0] == 90)
+    assert "a fost verificată" in group_announce.args[1]
+    assert "approape.ro" in group_announce.args[1] and "approape.ro" in private_nudge.args[1]
+    assert group_announce.kwargs["reply_markup"].inline_keyboard[0][0].url == "https://www.aproape.ro/"
     run(asyncio.sleep(0))
     assert member_deletions(env) == []  # the announcement is never scheduled for deletion
 
@@ -805,7 +799,7 @@ def test_reclama_deletes_the_ad_when_verified_member_has_used_five(env, run):
     message(env, run, 90, MISSED_AD, mid=29)
     group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad)
     assert member_deletions(env) == [29]
-    assert any("ai atins limita de 5 promovări pe zi" in c.args[1] for c in env.bot.send_message.call_args_list)
+    assert any("ai epuizat plafonul: 5 promovări în 24h" in c.args[1] for c in env.bot.send_message.call_args_list)
 
 
 def test_reclama_on_an_ad_already_counted_changes_nothing(env, run):
@@ -986,7 +980,7 @@ def test_tagged_unverified_member_gets_one_ad_and_video_verification_reply(env, 
     message(env, run, 90, "Salut tuturor", mid=1, sender_tag="Reclamă neverif.")
     assert member_deletions(env) == []
     assert run(env.store.recent_ad_count(G, 90, 24)) == 1
-    assert any("trimite la @approape_ro un video" in c.args[1] for c in env.bot.send_message.call_args_list)
+    assert any("Trimite ACUM în privat la @approape_ro un video" in c.args[1] for c in env.bot.send_message.call_args_list)
     assert any(c.kwargs.get("reply_to_message_id") == 1 for c in env.bot.send_message.call_args_list)
     message(env, run, 90, "Încă o promovare https://example.com/2", mid=2, sender_tag="Reclamă neverif.")
     assert member_deletions(env) == [2]

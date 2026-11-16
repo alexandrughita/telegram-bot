@@ -615,9 +615,10 @@ def test_profile_posted_recently_is_not_repeated(env, run, daytime):
     run(env.store.set_time("next_post_at", daytime - timedelta(minutes=1)))
 
     run(bot.run_tick(env.bot))
-    env.bot.send_photo.assert_not_awaited()
+    assert env.bot.send_photo.await_count == 1
+    assert "/escorte/ana" not in env.bot.send_photo.call_args.kwargs["caption"]
     stats = run(env.store.daily_post_stats(G))
-    assert stats["profiles"] == 1 and stats["contact_confirmed"] == 1
+    assert stats["profiles"] == 2 and stats["contact_confirmed"] == 1
 
 
 def test_group_message_marks_people_as_active(env, run):
@@ -736,8 +737,11 @@ def test_verifica_announces_her_in_the_group_for_good(env, run):
     posting_member(env, run, 90)
     group_command(env, run, ADMIN_ID, "/verifica", reply_to_uid=90, handler=bot.cmd_verify)
     env.bot.delete_message.assert_any_await(G, COMMAND_MID)
-    announce = env.bot.send_message.call_args
-    assert announce.args[0] == G and "a fost verificată" in announce.args[1]
+    group_announce = next(c for c in env.bot.send_message.call_args_list if c.args[0] == G)
+    private_nudge = next(c for c in env.bot.send_message.call_args_list if c.args[0] == 90)
+    assert "a fost verificată" in group_announce.args[1]
+    assert "approape.ro" in group_announce.args[1] and "approape.ro" in private_nudge.args[1]
+    assert group_announce.kwargs["reply_markup"].inline_keyboard[0][0].url == "https://www.aproape.ro/"
     run(asyncio.sleep(0))
     assert member_deletions(env) == []  # the announcement is never scheduled for deletion
 

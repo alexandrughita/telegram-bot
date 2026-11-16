@@ -327,10 +327,10 @@ async def invite_status(update, context):
     limit = await ad_limit(user.id)
     ad_rule = f"cel mult {limit} promovări în 24 de ore"
     await update.effective_message.reply_text(
-        f"🔥 Ești în joc. Acum joacă inteligent.\\n\\n"
+        f"🔥 Ești în joc. Acum joacă inteligent.\n\n"
         f"Limita ta: {ad_rule}. Reclamele peste limită se șterg. "
-        f"Maximum {STICKERS_PER_DAY} stickere pe zi; fără duplicate de poze, linkuri sau numere.\\n\\n"
-        f"Vrei să crești grupul? Invită oameni cu linkul tău:\\n{link}\\n👥 Ai adus: {count}",
+        f"Maximum {STICKERS_PER_DAY} stickere pe zi; fără duplicate de poze, linkuri sau numere.\n\n"
+        f"Vrei să crești grupul? Invită oameni cu linkul tău:\n{link}\n👥 Ai adus: {count}",
         disable_web_page_preview=True,
     )
 
@@ -544,7 +544,7 @@ async def handle_ad(bot, message):
         unit = "promovare" if limit == 1 else "promovări"
         notice = (f"⛔ {user.mention_html()}, limita este limita: {limit} {unit} în 24 de ore. "
                   f"Următoarea promovare: {friendly_when(retry, datetime.now(timezone.utc))}. "
-                  f"Postările peste limită se șterg.\\n\\n{REAL_MESSAGES_NOTE}")
+                  f"Postările peste limită se șterg.\n\n{REAL_MESSAGES_NOTE}")
         await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS)
         return False
 
@@ -927,16 +927,16 @@ async def cmd_verify(update, context):
                 log.warning("Admin command not deleted from the group: %s", exc)
         verb = "a fost verificată" if len(targets) == 1 else "au fost verificate"
         site_push = (
-            "🔥 Ai confirmat că poți promova în grup. Următorul pas: construiește-ți prezența pe approape.ro.\\n\\n"
+            "🔥 Ai confirmat că poți promova în grup. Următorul pas: construiește-ți prezența pe approape.ro.\n\n"
             "Dacă nu ai încă profil, creează-l gratuit. Dacă ai deja unul, actualizează-l și adaugă Telegram-ul "
-            "în Contul meu → Telegram. Nu te limita la grup: fă-te ușor de găsit.\\n"
+            "în Contul meu → Telegram. Nu te limita la grup: fă-te ușor de găsit.\n"
             "👉 https://www.aproape.ro/"
         )
         site_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
             "🚀 Creează-ți profilul pe approape.ro", url="https://www.aproape.ro/"
         )]])
         await bot.send_message(
-            GROUP_CHAT_ID, f"🎥 {names} {verb}.\\n\\n{site_push}",
+            GROUP_CHAT_ID, f"🎥 {names} {verb}.\n\n{site_push}",
             parse_mode="HTML", reply_markup=site_keyboard, disable_web_page_preview=True,
         )
         for user_id, _ in targets:

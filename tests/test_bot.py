@@ -573,8 +573,8 @@ class FakeHttp:
 
 @pytest.fixture
 def daytime(monkeypatch):
-    """Freeze 'now' at 14:00 in Bucharest and serve one recommended profile."""
-    now = datetime(2026, 10, 5, 14, 0, tzinfo=posts.LOCAL_TZ).astimezone(timezone.utc)
+    """Freeze 'now' at 14:00 Bucharest time and serve three distinct profiles, one WhatsApp-confirmed."""
+    now = datetime.now(posts.LOCAL_TZ).replace(hour=14, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
 
     class Clock(datetime):
         @classmethod
@@ -583,10 +583,12 @@ def daytime(monkeypatch):
 
     monkeypatch.setattr(bot, "datetime", Clock)
     monkeypatch.setattr(bot.httpx, "AsyncClient", FakeHttp)
-    rec = posts.Profile("/escorte/ana", "Ana", "Cluj", "https://x/ana.webp")
+    rec = posts.Profile("/escorte/ana", "Ana", "Cluj", "https://x/ana.webp", whatsapp_confirmed=True)
+    rec2 = posts.Profile("/escorte/bia", "Bia", "Iași", "https://x/bia.webp")
+    rec3 = posts.Profile("/creatoare/cora", "Cora", "Timișoara", "https://x/cora.webp")
 
     async def fake_site(_now):
-        return [], None, [rec]
+        return [], None, [rec, rec2, rec3]
     monkeypatch.setattr(posts, "fetch_site_profiles", fake_site)
     return now
 

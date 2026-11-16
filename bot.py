@@ -542,9 +542,9 @@ async def handle_ad(bot, message):
         await store.set_time(f"ad_limit:{GROUP_CHAT_ID}:{user.id}", datetime.now(timezone.utc))
         again = f"Poți posta din nou {friendly_when(retry, datetime.now(timezone.utc))}."
         unit = "promovare" if limit == 1 else "promovări"
-        notice = (f"⛔ {user.mention_html()}, limita este limita: {limit} {unit} în 24 de ore. "
-                  f"Următoarea promovare: {friendly_when(retry, datetime.now(timezone.utc))}. "
-                  f"Postările peste limită se șterg.\n\n{REAL_MESSAGES_NOTE}")
+        notice = (f"⛔ {user.mention_html()}, ai epuizat plafonul: {limit} {unit} în 24h. "
+                  f"Revii {friendly_when(retry, datetime.now(timezone.utc))}. "
+                  f"Orice reclamă înainte de reset se șterge. Fără negocieri.\n\n{REAL_MESSAGES_NOTE}")
         await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS)
         return False
 
@@ -707,7 +707,7 @@ async def on_group_message(update, context):
                 await send_temporary(
                     bot, GROUP_CHAT_ID,
                     f"🚨 {user.mention_html()}, ai folosit singura promovare disponibilă fără verificare. "
-                    "Vrei să continui? Atunci dovedește că profilul îți aparține. "
+                    "Vrei să continui? Atunci dovedește că tu ești cea care postează. "
                     "Trimite ACUM în privat la @approape_ro un video în care spui numele tău și numele grupului. "
                     "Până atunci ai doar 1 promovare în 24h. A doua reclamă va fi ștearsă. Fără excepții.",
                     NOTICE_TTL_SECONDS, reply_to_message_id=message.message_id,

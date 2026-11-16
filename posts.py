@@ -1,4 +1,4 @@
-"""Scheduled posts in the group: profiles from approape.ro and questions for the members.
+"""Three daily profile spotlights from approape.ro, including WhatsApp-confirmed contacts.
 
 The bot cannot wake itself on Render Free, so an external cron calls /tick every few
 minutes; each call keeps the service awake and asks `due` whether it is time to post.
@@ -62,14 +62,9 @@ def next_post_time(now, posts_today=0, rng=random):
     target += timedelta(minutes=int(rng.random() * 21))
     return target.astimezone(timezone.utc)
 
-def due(now, next_at, last_post_at, last_human_at):
-    """Time to post: the planned moment has come, it is daytime, and someone has
-    written in the group since the bot's last post — never talk into silence."""
-    if next_at is None or now < next_at or not _in_day_window(now):
-        return False
-    if last_human_at is None:
-        return False
-    return last_post_at is None or last_human_at > last_post_at
+def due(now, next_at, last_post_at, last_human_at=None):
+    """Post at the scheduled slot regardless of chat activity: the profile feed is a daily product surface."""
+    return next_at is not None and now >= next_at and _in_day_window(now)
 
 
 # ------------------------------------------------------------
@@ -105,8 +100,8 @@ def profile_caption(kind, profile):
         "top": "🏆 Profil popular săptămâna trecută",
         "recommended": "💫 Profil recomandat approape.ro",
     }[kind]
-    contact = "\\n📲 Contact WhatsApp confirmat" if profile.whatsapp_confirmed else ""
-    return f'{heading}\\n<b>{name}</b>{where}{contact}\\n<a href="{profile_url(profile)}">Vezi profilul</a>'
+    contact = "\n📲 Contact WhatsApp confirmat" if profile.whatsapp_confirmed else ""
+    return f'{heading}\n<b>{name}</b>{where}{contact}\n<a href="{profile_url(profile)}">Vezi profilul</a>'
 
 
 # ------------------------------------------------------------

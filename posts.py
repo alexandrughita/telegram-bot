@@ -14,49 +14,14 @@ import httpx
 
 SITE = "https://www.approape.ro"
 LOCAL_TZ = ZoneInfo("Europe/Bucharest")
-# Posts only from 10:00 to 01:00 local time (quiet 01:00–10:00), 2–3 a day.
-# The window crosses midnight, so DAY_END_HOUR is smaller than DAY_START_HOUR.
+# Three profile spotlights per Bucharest calendar day; quiet hours remain 01:00–10:00.
 DAY_START_HOUR = 10
 DAY_END_HOUR = 1
-MIN_GAP = timedelta(hours=3)
-MAX_GAP = timedelta(hours=6)
+POSTS_PER_DAY = 3
+POST_HOURS = (11, 16, 21)
 NEW_PROFILE_DAYS = 30
 PROFILE_REPEAT_DAYS = 30
-QUESTION_REPEAT_DAYS = 14
-# Questions marked "priority" (inviting people into the group) come back every few days.
-PRIORITY_REPEAT_DAYS = 3
 TRACKING = "utm_source=telegram&utm_medium=bot&utm_campaign=grup"
-
-# Open questions are plain messages people answer in the group; polls are
-# anonymous, so voting costs nothing and nobody's choice is on display.
-QUESTIONS = [
-    {"text": "Din ce oraș sunteți? Scrieți aici 👇 Vedem unde ar trebui să crească approape.ro."},
-    {"text": "Ce oraș credeți că lipsește de pe approape.ro? 👇"},
-    {"text": "Pentru fete: ce v-a adus cele mai multe mesaje — pozele, descrierea sau verificarea profilului? 👇"},
-    {"text": "Ce sfat ai pentru cineva care își face primul profil pe approape.ro? 👇"},
-    {"text": "Ce vă enervează cel mai tare când căutați o fată? Spuneți-ne, ca să reparăm. 👇"},
-    {"text": "Ați găsit pe approape.ro ce căutați? Ce v-a lipsit? 👇"},
-    {"poll": "Ce contează cel mai mult când alegi o fată?",
-     "options": ["Poze reale / verificate", "Recenziile", "Răspunde repede", "Prețul"]},
-    {"poll": "Din ce zonă ești?",
-     "options": ["București", "Ardeal", "Moldova", "Banat / Crișana", "Dobrogea", "Oltenia / Muntenia"]},
-    {"poll": "Cum preferi să iei legătura?",
-     "options": ["WhatsApp", "Telegram", "Apel", "Mesaj pe site"]},
-    {"poll": "Cât de des intri pe approape.ro?",
-     "options": ["Zilnic", "De câteva ori pe săptămână", "Rar", "Acum aflu de el"]},
-    {"poll": "Ce ți-ai dori să adăugăm pe approape.ro?",
-     "options": ["Mai multe orașe", "Filtre mai bune", "Mai multe recenzii", "Aplicație pe telefon"]},
-    {"poll": "Ai cont pe approape.ro?",
-     "options": ["Da", "Nu încă", "Am încercat și n-a mers"]},
-    # Appended, not inserted: questions already posted are remembered by index.
-    {"priority": True,
-     "text": "Ai fost mulțumit de o fată? Adaug-o în grup, ca să creăm împreună o comunitate interesată "
-             "și interesantă 💪 Așa se strâng aici fete serioase, care nu dau țeapă, iar ceilalți știu la "
-             "cine să meargă. O poți adăuga direct sau cu linkul tău de la @approape_guard_bot."},
-    {"priority": True,
-     "text": "Fetelor: adăugați în grup clienții mulțumiți, ca să creăm împreună o comunitate interesată "
-             "și interesantă 💪 Îi puteți adăuga direct sau cu linkul vostru de la @approape_guard_bot."},
-]
 
 PHOTO_KEYS = ("url", "src", "photoUrl", "downloadURL")
 
@@ -68,6 +33,7 @@ class Profile:
     city: str
     photo: str
     created_at: datetime | None = None
+    whatsapp_confirmed: bool = False
 
 
 # ------------------------------------------------------------
@@ -80,17 +46,21 @@ def _in_day_window(moment):
     return hour >= DAY_START_HOUR or hour < DAY_END_HOUR
 
 
-def next_post_time(now, rng=random):
-    """A random moment 3–6h from now, moved to the next morning if it falls at night."""
-    candidate = now + MIN_GAP + (MAX_GAP - MIN_GAP) * rng.random()
-    if _in_day_window(candidate):
-        return candidate
-    local = candidate.astimezone(LOCAL_TZ)
-    morning = local.replace(hour=DAY_START_HOUR, minute=0, second=0, microsecond=0)
-    if local.hour >= DAY_START_HOUR:
-        morning += timedelta(days=1)
-    return (morning + timedelta(hours=2) * rng.random()).astimezone(timezone.utc)
-
+def next_post_time(now, posts_today=0, rng=random):
+    """Return the next daily spotlight slot: approximately 11:00, 16:00 and 21:00 Bucharest time."""
+    local = now.astimezone(LOCAL_TZ)
+    if posts_today >= POSTS_PER_DAY:
+        target = (local + timedelta(days=1)).replace(hour=POST_HOURS[0], minute=0, second=0, microsecond=0)
+    else:
+        target = local.replace(hour=POST_HOURS[posts_today], minute=0, second=0, microsecond=0)
+        if target <= local:
+            later = [h for h in POST_HOURS[posts_today + 1:] if h > local.hour]
+            if later:
+                target = local.replace(hour=later[0], minute=0, second=0, microsecond=0)
+            else:
+                target = (local + timedelta(days=1)).replace(hour=POST_HOURS[0], minute=0, second=0, microsecond=0)
+    target += timedelta(minutes=int(rng.random() * 21))
+    return target.astimezone(timezone.utc)
 
 def due(now, next_at, last_post_at, last_human_at):
     """Time to post: the planned moment has come, it is daytime, and someone has
@@ -105,21 +75,11 @@ def due(now, next_at, last_post_at, last_human_at):
 # ------------------------------------------------------------
 # What to post
 # ------------------------------------------------------------
-def pick_question(recently_used, priority_used=frozenset(), rng=random):
-    """A priority question not posted within PRIORITY_REPEAT_DAYS (priority_used) if there is
-    one; otherwise a regular question not among the recently used ones, or any regular one."""
-    due = [i for i, q in enumerate(QUESTIONS) if q.get("priority") and str(i) not in priority_used]
-    if due:
-        return rng.choice(due)
-    regular = [i for i, q in enumerate(QUESTIONS) if not q.get("priority")]
-    fresh = [i for i in regular if str(i) not in recently_used]
-    return rng.choice(fresh or regular)
-
-
-def pick_profile(new, top, recommended, recently_posted, now, rng=random):
-    """(kind, profile): a new profile first, then last week's top, then a recommended one."""
+def pick_profile(new, top, recommended, recently_posted, now, rng=random, require_whatsapp=False):
+    """Pick a fresh profile, optionally requiring its WhatsApp contact to be confirmed."""
     def fresh(profiles):
-        return [p for p in profiles if p.path not in recently_posted and p.photo]
+        return [p for p in profiles if p.path not in recently_posted and p.photo
+                and (not require_whatsapp or p.whatsapp_confirmed)]
 
     cutoff = now - timedelta(days=NEW_PROFILE_DAYS)
     new = [p for p in fresh(new) if p.created_at and p.created_at >= cutoff]
@@ -142,10 +102,11 @@ def profile_caption(kind, profile):
     where = f", {city}" if city else ""
     heading = {
         "new": "✨ Profil nou pe approape.ro",
-        "top": "🏆 Cel mai căutat profil săptămâna trecută",
+        "top": "🏆 Profil popular săptămâna trecută",
         "recommended": "💫 Profil recomandat approape.ro",
     }[kind]
-    return f'{heading}\n<b>{name}</b>{where}\n<a href="{profile_url(profile)}">Vezi profilul</a>'
+    contact = "\\n📲 Contact WhatsApp confirmat" if profile.whatsapp_confirmed else ""
+    return f'{heading}\\n<b>{name}</b>{where}{contact}\\n<a href="{profile_url(profile)}">Vezi profilul</a>'
 
 
 # ------------------------------------------------------------
@@ -192,6 +153,7 @@ def profile_from_fields(fields):
         city=str(fields.get("currentCity") or fields.get("creatorCity") or "").strip(),
         photo=first_photo(fields),
         created_at=fields.get("createdAt"),
+        whatsapp_confirmed=fields.get("whatsappConfirmed") is True,
     )
 
 
@@ -214,7 +176,7 @@ def sitemap_paths(xml):
 
 QUERY_FIELDS = ["slug", "displayName", "role", "photos", "photoURL", "profilePhotoUrl", "photoUrl",
                 "currentCity", "creatorCity", "createdAt", "isActive", "isHidden", "isDeleted", "banned",
-                "suspended", "disabled", "deletedAt", "awayMode", "awayUntil", "source"]
+                "suspended", "disabled", "deletedAt", "awayMode", "awayUntil", "source", "whatsappConfirmed"]
 
 
 FIRESTORE_QUERY = ("https://firestore.googleapis.com/v1/projects/approape-bed86"

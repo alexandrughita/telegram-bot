@@ -116,8 +116,8 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
   repeated within 30 days.
 - If no eligible WhatsApp-confirmed profile is available, the bot waits and retries rather
   than silently breaking the daily contact-confirmation requirement.
-- The bot still avoids posting into silence: a human must have written in the group since
-  the previous bot post. The three target slots are Bucharest local time.
+- Posts run at the three Bucharest-local target slots even when the group is quiet; this
+  keeps the daily profile-discovery feed consistent.
 - Driven by `/tick`, see below. Every post is in the `bot_posts` table.
 
 **Telegram verification → site account growth**

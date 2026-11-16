@@ -178,8 +178,8 @@ FIRESTORE_QUERY = ("https://firestore.googleapis.com/v1/projects/approape-bed86"
                    "/databases/(default)/documents:runQuery")
 
 
-async def _query_escorts(client, limit, order_field=None, slug=None):
-    """Public escorts documents (the collection is world-readable), as plain dicts."""
+async def _query_escorts(client, limit, order_field=None, slug=None, whatsapp_confirmed=None):
+    """Public escort documents (the collection is world-readable), as plain dicts."""
     query = {
         "from": [{"collectionId": "escorts"}],
         "select": {"fields": [{"fieldPath": f} for f in QUERY_FIELDS]},
@@ -190,6 +190,9 @@ async def _query_escorts(client, limit, order_field=None, slug=None):
     if slug:
         query["where"] = {"fieldFilter": {"field": {"fieldPath": "slug"}, "op": "EQUAL",
                                           "value": {"stringValue": slug}}}
+    elif whatsapp_confirmed is True:
+        query["where"] = {"fieldFilter": {"field": {"fieldPath": "whatsappConfirmed"}, "op": "EQUAL",
+                                          "value": {"booleanValue": True}}}
     resp = await client.post(FIRESTORE_QUERY, json={"structuredQuery": query})
     resp.raise_for_status()
     return [{k: _value(v) for k, v in row["document"].get("fields", {}).items()}
@@ -220,6 +223,11 @@ async def fetch_site_profiles(now):
         # Recommended: profiles their owners keep up to date, never imported ones.
         # Filtered here rather than in the query, which would need a composite index.
         recommended = usable(await _query_escorts(client, 200, order_field="updatedAt"), claimed_only=True)
+        # Contact-confirmed profiles are an independent candidate pool: do not let the
+        # claimed-only recommendation filter make the daily confirmed-contact slot impossible.
+        confirmed = usable(await _query_escorts(client, 200, whatsapp_confirmed=True))
+        known_paths = {profile.path for profile in recommended}
+        recommended.extend(profile for profile in confirmed if profile.path not in known_paths)
 
         top = None
         try:

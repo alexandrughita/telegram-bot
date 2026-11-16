@@ -35,16 +35,14 @@ def test_late_start_moves_to_next_remaining_slot_without_backfill_burst():
     assert posts.next_post_time(local(22), 0, FixedRandom(0)) == local(11, day=6)
 
 
-def test_due_needs_the_time_daylight_and_someone_who_wrote_since():
+def test_due_needs_only_the_scheduled_time_and_daylight_window():
     now = local(14)
     earlier = now - timedelta(hours=1)
-    assert posts.due(now, earlier, last_post_at=None, last_human_at=earlier)
+    assert posts.due(now, earlier, last_post_at=earlier, last_human_at=None)
     assert not posts.due(now, now + timedelta(minutes=1), None, earlier)
     assert not posts.due(local(2), local(1), None, local(1))
     assert not posts.due(local(9, 59), local(1), None, local(1))
-    assert posts.due(local(0, 30), local(0), None, local(0, 10))
-    assert not posts.due(now, earlier, last_post_at=earlier, last_human_at=earlier - timedelta(minutes=5))
-    assert not posts.due(now, earlier, None, last_human_at=None)
+    assert posts.due(local(0, 30), local(0), None, None)
 
 
 def profile(path, created=None, photo="https://x/p.webp", confirmed=False):

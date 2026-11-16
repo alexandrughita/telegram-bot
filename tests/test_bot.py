@@ -399,7 +399,7 @@ def test_a_lookalike_domain_is_not_approape(env, run):
     for mid in (1, 2):
         message(env, run, 90, "Vezi https://approape.ro.example.com/x", mid=mid)
     assert member_deletions(env) == [2]
-    assert "limita este limita: 1 promovare în 24 de ore" in last_text(env)
+    assert "ai epuizat plafonul: 1 promovare în 24h" in last_text(env)
 
 
 def test_stickers_arriving_together_are_still_limited(env, run):
@@ -698,7 +698,7 @@ def test_verified_member_may_post_five_ads_a_day(env, run):
     for mid in range(1, 7):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
     assert member_deletions(env) == [6]
-    assert "limita este limita: 5 promovări în 24 de ore" in last_text(env)
+    assert "ai epuizat plafonul: 5 promovări în 24h" in last_text(env)
     assert "video" not in last_text(env)  # already verified: nothing to offer
     assert bot.REAL_MESSAGES_NOTE in last_text(env)
     assert events(env, run, 90)[0] == "verify"
@@ -799,7 +799,7 @@ def test_reclama_deletes_the_ad_when_verified_member_has_used_five(env, run):
     message(env, run, 90, MISSED_AD, mid=29)
     group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad)
     assert member_deletions(env) == [29]
-    assert any("limita este limita: 5 promovări în 24 de ore" in c.args[1] for c in env.bot.send_message.call_args_list)
+    assert any("ai epuizat plafonul: 5 promovări în 24h" in c.args[1] for c in env.bot.send_message.call_args_list)
 
 
 def test_reclama_on_an_ad_already_counted_changes_nothing(env, run):

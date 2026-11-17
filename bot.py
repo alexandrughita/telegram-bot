@@ -542,10 +542,23 @@ async def handle_ad(bot, message):
         await store.set_time(f"ad_limit:{GROUP_CHAT_ID}:{user.id}", datetime.now(timezone.utc))
         again = f"Poți posta din nou {friendly_when(retry, datetime.now(timezone.utc))}."
         unit = "promovare" if limit == 1 else "promovări"
-        notice = (f"⛔ {user.mention_html()}, ai epuizat plafonul: {limit} {unit} în 24h. "
-                  f"Revii {friendly_when(retry, datetime.now(timezone.utc))}. "
-                  f"Orice reclamă înainte de reset se șterge. Fără negocieri.\n\n{REAL_MESSAGES_NOTE}")
-        await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS)
+        verified_non_top = await store.is_verified(GROUP_CHAT_ID, user.id) and not is_top_girl(message)
+        if verified_non_top:
+            notice = (
+                f"👑 {user.mention_html()}, ai atins limita de {limit} promovări în 24h. "
+                f"Revii {friendly_when(retry, datetime.now(timezone.utc))}.\n\n"
+                "Vrei promovare dublă? Devino TOP GIRL: 10 promovări/zi în grup + promovare pe approape.ro. "
+                "Creează-ți contul și intră în TOP!"
+            )
+            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
+                "🚀 Devino TOP GIRL", url="https://www.aproape.ro/"
+            )]])
+            await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS, reply_markup=keyboard)
+        else:
+            notice = (f"⛔ {user.mention_html()}, ai epuizat plafonul: {limit} {unit} în 24h. "
+                      f"Revii {friendly_when(retry, datetime.now(timezone.utc))}. "
+                      f"Orice reclamă înainte de reset se șterge. Fără negocieri.\\n\\n{REAL_MESSAGES_NOTE}")
+            await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS)
         return False
 
     return True

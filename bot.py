@@ -547,11 +547,11 @@ async def handle_ad(bot, message):
             notice = (
                 f"👑 {user.mention_html()}, ai atins limita de {limit} promovări în 24h. "
                 f"Revii {friendly_when(retry, datetime.now(timezone.utc))}.\n\n"
-                "Vrei promovare dublă? Devino TOP GIRL: 10 promovări/zi în grup + promovare pe approape.ro. "
+                "Vrei promovare dublă? Devino TOP GIRL: 10 promovări/zi în grup + promovare pe www.approape.ro. "
                 "Creează-ți contul și intră în TOP!"
             )
             keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
-                "🚀 Devino TOP GIRL", url="https://www.aproape.ro/"
+                "🚀 Devino TOP GIRL", url="https://www.approape.ro/?auth=login"
             )]])
             await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS, reply_markup=keyboard)
         else:

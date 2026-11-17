@@ -104,7 +104,7 @@ def profile_caption(kind, profile):
         "recommended": "💫 Profil recomandat approape.ro",
     }[kind]
     contact = "\n📲 Contact WhatsApp confirmat" if profile.whatsapp_confirmed else ""
-    return f'{heading}\n<b>{name}</b>{where}{contact}\n<a href="{profile_url(profile)}">Vezi profilul</a>'
+    return f'{heading}\n<b>{name}</b>{where}{contact}\n<a href="{profile_url(profile)}">Ia legătura cu ea</a>'
 
 
 # ------------------------------------------------------------

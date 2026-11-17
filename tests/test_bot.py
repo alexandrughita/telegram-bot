@@ -701,7 +701,8 @@ def test_verified_member_may_post_five_ads_a_day(env, run):
     assert "ai atins limita de 5 promovări în 24h" in last_text(env)
     assert "10 promovări/zi în grup + promovare pe approape.ro" in last_text(env)
     assert any(
-        kwargs.get("reply_markup") and "Devino TOP GIRL" in str(kwargs["reply_markup"])
+        kwargs.get("reply_markup")
+        and kwargs["reply_markup"].inline_keyboard[0][0].text == "🚀 Devino TOP GIRL"
         for call in env.bot.send_message.call_args_list
         for kwargs in [call.kwargs]
     )

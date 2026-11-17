@@ -249,7 +249,7 @@ class Store:
         """Profile posts and WhatsApp-confirmed profile posts since Bucharest midnight."""
         return await self._one("""SELECT
             COUNT(*) FILTER (WHERE kind <> 'question') AS profiles,
-            COUNT(*) FILTER (WHERE kind LIKE 'whatsapp_%') AS contact_confirmed
+            COUNT(*) FILTER (WHERE left(kind, 9) = 'whatsapp_') AS contact_confirmed
             FROM bot_posts
             WHERE chat_id=%s
               AND posted_at >= (date_trunc('day', now() AT TIME ZONE 'Europe/Bucharest')

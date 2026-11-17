@@ -24,6 +24,9 @@ PROFILE_REPEAT_DAYS = 30
 TRACKING = "utm_source=telegram&utm_medium=bot&utm_campaign=grup"
 
 PHOTO_KEYS = ("url", "src", "photoUrl", "downloadURL")
+MIN_INDEXABLE_BIO_LENGTH = 60
+BLOCKED_PROFILE_VALUES = {"hidden", "deleted", "banned", "blocked", "disabled", "suspended", "inactive", "private", "draft"}
+REMOVED_PROFILE_SLUGS = {"adela-alba-iulia", "amanda-satu-mare", "elly-moldova-noua", "simona-moldova-veche"}
 
 
 @dataclass
@@ -138,25 +141,50 @@ def first_photo(fields):
 
 
 def profile_from_fields(fields):
-    slug = fields.get("slug")
+    slug = str(fields.get("slug") or "").strip()
     if not slug:
         return None
     prefix = "creatoare" if fields.get("role") == "creatoare" else "escorte"
     return Profile(
         path=f"/{prefix}/{slug}",
         name=str(fields.get("displayName") or "").strip(),
-        city=str(fields.get("currentCity") or fields.get("creatorCity") or "").strip(),
+        city=str(fields.get("currentCity") or fields.get("creatorCity") or fields.get("address") or "").strip(),
         photo=first_photo(fields),
         created_at=fields.get("createdAt"),
         whatsapp_confirmed=fields.get("whatsappConfirmed") is True,
     )
 
 
+def is_indexable_profile(fields):
+    """Mirror the public-profile quality gate used by Nearby's sitemap generator."""
+    slug = str(fields.get("slug") or "").strip().lower()
+    role = str(fields.get("role") or "").strip().lower()
+    bio = re.sub(r"\\s+", " ", str(fields.get("bio") or "")).strip()
+    city = str(fields.get("citySlug") or fields.get("currentCity") or
+               fields.get("creatorCity") or fields.get("address") or "").strip()
+    if not slug or slug in REMOVED_PROFILE_SLUGS:
+        return False
+    if role in {"client", "admin"}:
+        return False
+    if not str(fields.get("displayName") or "").strip():
+        return False
+    if not first_photo(fields):
+        return False
+    if len(bio) < MIN_INDEXABLE_BIO_LENGTH or not city:
+        return False
+    return True
+
+
 def is_listed_now(fields, now):
-    """Live flags that can change after the sitemap was built."""
+    """Mirror sitemap visibility rules plus live flags that can change after a build."""
+    if not is_indexable_profile(fields):
+        return False
     if fields.get("isActive") is False:
         return False
     if any(fields.get(k) for k in ("isHidden", "isDeleted", "banned", "suspended", "disabled", "deletedAt")):
+        return False
+    if any(str(fields.get(k) or "").strip().lower() in BLOCKED_PROFILE_VALUES
+           for k in ("status", "profileStatus", "visibility")):
         return False
     if fields.get("awayMode"):
         until = fields.get("awayUntil")
@@ -170,8 +198,9 @@ def sitemap_paths(xml):
 
 
 QUERY_FIELDS = ["slug", "displayName", "role", "photos", "photoURL", "profilePhotoUrl", "photoUrl",
-                "currentCity", "creatorCity", "createdAt", "isActive", "isHidden", "isDeleted", "banned",
-                "suspended", "disabled", "deletedAt", "awayMode", "awayUntil", "source", "whatsappConfirmed"]
+                "bio", "citySlug", "address", "currentCity", "creatorCity", "createdAt", "isActive",
+                "isHidden", "isDeleted", "banned", "suspended", "disabled", "deletedAt", "status",
+                "profileStatus", "visibility", "awayMode", "awayUntil", "source", "whatsappConfirmed"]
 
 
 FIRESTORE_QUERY = ("https://firestore.googleapis.com/v1/projects/approape-bed86"
@@ -200,22 +229,22 @@ async def _query_escorts(client, limit, order_field=None, slug=None, whatsapp_co
 
 
 async def fetch_site_profiles(now):
-    """(new, top, recommended) — only profiles the site itself lists in its sitemaps,
-    so the site's visibility rules are never copied here."""
-    async with httpx.AsyncClient(timeout=15) as client:
-        listed = set()
-        for name in ("sitemap-escorte.xml", "sitemap-creatoare.xml"):
-            resp = await client.get(f"{SITE}/{name}")
-            resp.raise_for_status()
-            listed |= sitemap_paths(resp.text)
+    """(new, top, recommended) using the same public-profile eligibility rules as the site.
 
+    The public Firestore collection is the source of profile data. We deliberately do
+    not fetch Cloudflare-protected sitemap files; their quality/visibility gate is
+    mirrored by is_indexable_profile() and is_listed_now().
+    """
+    async with httpx.AsyncClient(timeout=15) as client:
         def usable(rows, claimed_only=False):
             profiles = []
             for fields in rows:
                 if claimed_only and fields.get("source") != "claimed":
                     continue
+                if not is_listed_now(fields, now):
+                    continue
                 profile = profile_from_fields(fields)
-                if profile and profile.path in listed and is_listed_now(fields, now):
+                if profile:
                     profiles.append(profile)
             return profiles
 
@@ -234,9 +263,9 @@ async def fetch_site_profiles(now):
             resp = await client.get(f"{SITE}/api/top-weekly")
             resp.raise_for_status()
             path = ((resp.json().get("currentWeek") or {}).get("top") or {}).get("profilePath") or ""
-            if path in listed:
+            if path:
                 rows = await _query_escorts(client, 1, slug=path.rsplit("/", 1)[-1])
                 top = next((p for p in usable(rows) if p.path == path), None)
         except Exception:
-            top = None  # the ranking is optional; the other posts still work
+            top = None  # the ranking is optional; other profile pools still work
         return new, top, recommended

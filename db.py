@@ -157,6 +157,7 @@ class Store:
         return r["n"]
     async def recent_texts(self,chat_id,user_id,hours):
         return await self._all("""SELECT id,text FROM messages WHERE chat_id=%s AND user_id=%s AND text<>''
+            AND is_ad=TRUE
             AND created_at >= now() - %s * interval '1 hour'""",(chat_id,user_id,hours))
     async def mark_ads(self,ids):
         if ids: await self._execute("UPDATE messages SET is_ad=TRUE WHERE id = ANY(%s)",(list(ids),))

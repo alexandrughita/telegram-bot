@@ -557,7 +557,7 @@ async def handle_ad(bot, message):
         else:
             notice = (f"⛔ {user.mention_html()}, ai epuizat plafonul: {limit} {unit} în 24h. "
                       f"Revii {friendly_when(retry, datetime.now(timezone.utc))}. "
-                      f"Orice reclamă înainte de reset se șterge. Fără negocieri.\\n\\n{REAL_MESSAGES_NOTE}")
+                      f"Orice reclamă înainte de reset se șterge. Fără negocieri.\n\n{REAL_MESSAGES_NOTE}")
             await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS)
         return False
 

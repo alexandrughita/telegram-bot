@@ -662,10 +662,11 @@ async def on_group_message(update, context):
 
         entities = (message.entities or ()) + (message.caption_entities or ())
         custom_emoji = sum(e.type == MessageEntity.CUSTOM_EMOJI for e in entities)
-        # Until /verifica: once tagged "Reclamă neverif.", everything she posts is an ad, and so
-        # is any selling phrase ("libera web", "vand content").
-        unverified_hint = not await store.is_verified(GROUP_CHAT_ID, user.id) and (
-            is_tagged_unverified(message) or unverified_ad(text))
+        # The "Reclamă neverif." sender tag is informational, not proof that every
+        # message is an ad. Count/delete only messages that actually match ad signals.
+        # This keeps ordinary conversation and replies (e.g. "Sunt în spam când ies adaug ok?")
+        # available while the one-ad/24h limit still applies to real promotions.
+        unverified_hint = not await store.is_verified(GROUP_CHAT_ID, user.id) and unverified_ad(text)
         is_ad = unverified_hint or external_link_ad or text_ad or content_ad(
             text, custom_emoji, await store.ad_keywords(GROUP_CHAT_ID), await store.learned_ads(GROUP_CHAT_ID))
         if is_ad:

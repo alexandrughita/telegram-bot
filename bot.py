@@ -643,10 +643,9 @@ async def on_group_message(update, context):
                 NOTICE_TTL_SECONDS)
             return
 
-        # Repeated text is an ad: the same text (15+ normalized characters) or a reworded
-        # copy of it (same_ad_text). Every copy in the last 24h counts, the first one
-        # included, so 2 ads/24h means 2 copies. A forward also repeats whatever anyone
-        # else posted: that counts as her ad too.
+        # Repeated text is an ad only when it duplicates/rephrases a message already
+        # classified as an ad. Ordinary conversation must never become an ad just because
+        # someone repeats a sentence.
         repeats = [r["id"] for r in await store.recent_texts(GROUP_CHAT_ID, user.id, AD_WINDOW_HOURS)
                    if same_ad_text(fp.text, r["text"])]
         await store.mark_ads(repeats)
@@ -662,13 +661,18 @@ async def on_group_message(update, context):
 
         entities = (message.entities or ()) + (message.caption_entities or ())
         custom_emoji = sum(e.type == MessageEntity.CUSTOM_EMOJI for e in entities)
-        # The "Reclamă neverif." sender tag is informational, not proof that every
-        # message is an ad. Count/delete only messages that actually match ad signals.
-        # This keeps ordinary conversation and replies (e.g. "Sunt în spam când ies adaug ok?")
-        # available while the one-ad/24h limit still applies to real promotions.
-        unverified_hint = not await store.is_verified(GROUP_CHAT_ID, user.id) and unverified_ad(text)
-        is_ad = unverified_hint or external_link_ad or text_ad or content_ad(
-            text, custom_emoji, await store.ad_keywords(GROUP_CHAT_ID), await store.learned_ads(GROUP_CHAT_ID))
+        verified = await store.is_verified(GROUP_CHAT_ID, user.id)
+        already_tagged_unverified = not verified and is_tagged_unverified(message)
+        learned_ads = await store.learned_ads(GROUP_CHAT_ID)
+        if already_tagged_unverified:
+            # Once tagged, only a duplicate/near-copy of a message already marked as an ad
+            # (or explicitly learned by an admin) counts as another promotion. New chat,
+            # replies and unrelated messages are left alone, even if they contain a link.
+            is_ad = text_ad or any(same_ad_text(fp.text, normalize_text(old)) for old in learned_ads)
+        else:
+            unverified_hint = not verified and unverified_ad(text)
+            is_ad = unverified_hint or external_link_ad or text_ad or content_ad(
+                text, custom_emoji, await store.ad_keywords(GROUP_CHAT_ID), learned_ads)
         if is_ad:
             await tag_advertiser(bot, message)
 

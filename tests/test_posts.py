@@ -92,14 +92,36 @@ def test_firestore_fields_become_a_profile():
         "/creatoare/ana", "Ana", "Iași", "https://x/1.webp", True)
 
 
+def eligible_fields(**overrides):
+    fields = {
+        "slug": "ana", "role": "escorte", "displayName": "Ana",
+        "photoURL": "https://x/p.webp", "bio": "Descriere suficient de lunga " * 3,
+        "citySlug": "cluj", "isActive": True,
+    }
+    fields.update(overrides)
+    return fields
+
+
+def test_sitemap_eligibility_requires_public_quality_profile():
+    now = local(12)
+    assert posts.is_indexable_profile(eligible_fields())
+    assert not posts.is_indexable_profile(eligible_fields(bio="prea scurt"))
+    assert not posts.is_indexable_profile(eligible_fields(photoURL=""))
+    assert not posts.is_indexable_profile(eligible_fields(citySlug=""))
+    assert not posts.is_indexable_profile(eligible_fields(role="client"))
+    assert not posts.is_indexable_profile(eligible_fields(slug="adela-alba-iulia"))
+    assert not posts.is_indexable_profile(eligible_fields(status="private"))
+    assert posts.is_listed_now(eligible_fields(), now)
+
+
 def test_away_hidden_or_inactive_profiles_are_skipped():
     now = local(12)
-    assert posts.is_listed_now({}, now)
-    assert not posts.is_listed_now({"isHidden": True}, now)
-    assert not posts.is_listed_now({"isActive": False}, now)
-    assert not posts.is_listed_now({"awayMode": True}, now)
-    assert not posts.is_listed_now({"awayMode": True, "awayUntil": now + timedelta(days=1)}, now)
-    assert posts.is_listed_now({"awayMode": True, "awayUntil": now - timedelta(days=1)}, now)
+    base = eligible_fields()
+    assert not posts.is_listed_now({**base, "isHidden": True}, now)
+    assert not posts.is_listed_now({**base, "isActive": False}, now)
+    assert not posts.is_listed_now({**base, "awayMode": True}, now)
+    assert not posts.is_listed_now({**base, "awayMode": True, "awayUntil": now + timedelta(days=1)}, now)
+    assert posts.is_listed_now({**base, "awayMode": True, "awayUntil": now - timedelta(days=1)}, now)
 
 
 def test_sitemap_paths():

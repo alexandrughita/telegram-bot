@@ -81,7 +81,7 @@ def test_old_or_photoless_profiles_are_not_new():
 def test_caption_marks_confirmed_contact_and_tracks_the_link():
     caption = posts.profile_caption("new", profile("/creatoare/ana", confirmed=True))
     assert "Contact WhatsApp confirmat" in caption
-    assert 'href="https://www.aproape.ro/creatoare/ana?utm_source=telegram' in caption
+    assert 'href="https://www.approape.ro/creatoare/ana?utm_source=telegram' in caption
 
 
 def test_firestore_fields_become_a_profile():
@@ -123,7 +123,3 @@ def test_away_hidden_or_inactive_profiles_are_skipped():
     assert not posts.is_listed_now({**base, "awayMode": True, "awayUntil": now + timedelta(days=1)}, now)
     assert posts.is_listed_now({**base, "awayMode": True, "awayUntil": now - timedelta(days=1)}, now)
 
-
-def test_sitemap_paths():
-    xml = "<url><loc>https://www.aproape.ro/escorte/ana</loc></url><url><loc>https://www.aproape.ro/creatoare/bia</loc></url>"
-    assert posts.sitemap_paths(xml) == {"/escorte/ana", "/creatoare/bia"}

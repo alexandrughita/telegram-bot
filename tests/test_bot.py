@@ -975,20 +975,23 @@ def test_a_member_already_tagged_is_not_tagged_again(env, run):
     assert tags(env) == []
 
 
-def test_tagged_unverified_member_can_chat_and_only_second_actual_ad_is_deleted(env, run):
+def test_tagged_unverified_only_loses_duplicate_or_near_copy_of_marked_ad(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Sunt în spam când ies adaug ok?", mid=1, sender_tag="Reclamă neverif.")
+    message(env, run, 90, "Sunt în spam când ies adaug ok?", mid=2, sender_tag="Reclamă neverif.")
     assert member_deletions(env) == []
     assert run(env.store.recent_ad_count(G, 90, 24)) == 0
 
-    message(env, run, 90, "Anunț, vezi https://example.com/1", mid=2, sender_tag="Reclamă neverif.")
+    message(env, run, 90, "Anunț, vezi https://example.com/1", mid=3, sender_tag="Reclamă neverif.")
     assert member_deletions(env) == []
     assert run(env.store.recent_ad_count(G, 90, 24)) == 1
     assert any("Trimite ACUM în privat la @approape_ro un video" in c.args[1] for c in env.bot.send_message.call_args_list)
-    assert any(c.kwargs.get("reply_to_message_id") == 2 for c in env.bot.send_message.call_args_list)
 
-    message(env, run, 90, "Încă o promovare https://example.com/2", mid=3, sender_tag="Reclamă neverif.")
-    assert member_deletions(env) == [3]
+    # A different conversational reply is allowed, but a close copy of the marked ad is deleted.
+    message(env, run, 90, "Sunt în spam, când ies mă adaugi și pe mine?", mid=4, sender_tag="Reclamă neverif.")
+    assert member_deletions(env) == []
+    message(env, run, 90, "Anunț vezi https://example.com/1", mid=5, sender_tag="Reclamă neverif.")
+    assert member_deletions(env) == [5]
     assert not muted_until_lifted(env, 90)
 
 def test_a_verified_member_still_tagged_unverified_posts_normally(env, run):

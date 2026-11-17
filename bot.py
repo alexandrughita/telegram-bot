@@ -853,6 +853,55 @@ async def run_tick(bot):
         await store.record_post(GROUP_CHAT_ID, post_kind, profile.path, now)
         await store.set_time("next_post_at", posts.next_post_time(now, posted_today + 1))
 
+
+async def cmd_testpost(update, context):
+    """Admin-only immediate spotlight test. Uses normal eligibility/contact rules and
+    records the post so the daily cap and repeat protection remain accurate."""
+    message, bot = update.effective_message, context.bot
+    if update.effective_chat.id != GROUP_CHAT_ID or not await is_admin(
+        bot, GROUP_CHAT_ID, update.effective_user.id
+    ):
+        return
+
+    async with _tick_lock:
+        now = datetime.now(timezone.utc)
+        stats = await store.daily_post_stats(GROUP_CHAT_ID)
+        posted_today = stats["profiles"] or 0
+        confirmed_today = stats["contact_confirmed"] or 0
+
+        if posted_today >= posts.POSTS_PER_DAY:
+            await admin_reply(update, bot, "Nu am trimis testul: limita de 3 promovări automate pe zi este deja atinsă.")
+            return
+
+        try:
+            recent = await store.recent_post_refs(GROUP_CHAT_ID, posts.PROFILE_REPEAT_DAYS)
+            new, top, recommended = await posts.fetch_site_profiles(now)
+            kind, profile = posts.pick_profile(
+                new, top, recommended, recent, now,
+                require_whatsapp=confirmed_today < 1,
+            )
+            if not profile:
+                await admin_reply(
+                    update, bot,
+                    "Nu am găsit acum un profil eligibil. Dacă este prima promovare a zilei, "
+                    "este obligatoriu contactul WhatsApp confirmat."
+                )
+                return
+
+            await post_profile(bot, kind, profile)
+            post_kind = f"whatsapp_{kind}" if profile.whatsapp_confirmed else kind
+            await store.record_post(GROUP_CHAT_ID, post_kind, profile.path, now)
+            await store.set_time("next_post_at", posts.next_post_time(now, posted_today + 1))
+            await admin_reply(
+                update, bot,
+                f"✅ Promovarea de test a fost publicată în grup: "
+                f"<a href=\"{html.escape(posts.SITE + profile.path, quote=True)}\">{html.escape(profile.name)}</a>. "
+                f"Este înregistrată în limita zilnică ({posted_today + 1}/{posts.POSTS_PER_DAY})."
+            )
+        except Exception as exc:
+            log.exception("Admin test spotlight failed")
+            await admin_reply(update, bot, f"❌ Nu am putut publica testul: {html.escape(str(exc)[:300])}")
+
 async def cmd_chatid(update, context):
     chat = update.effective_chat
     if chat.type != "private" and not await is_admin(context.bot, chat.id, update.effective_user.id):
@@ -1326,6 +1375,7 @@ def build_application():
     group = filters.Chat(GROUP_CHAT_ID) if GROUP_CHAT_ID else filters.ChatType.GROUPS
     application.add_handler(CommandHandler("chatid", cmd_chatid))
     application.add_handler(CommandHandler("stats", cmd_stats, filters=group))
+    application.add_handler(CommandHandler("testpost", cmd_testpost, filters=group))
     application.add_handler(CommandHandler(["whitelist", "unwhitelist"], cmd_whitelist, filters=group))
     application.add_handler(CommandHandler("info", cmd_info, filters=group | private))
     application.add_handler(CommandHandler(["verifica", "neverifica"], cmd_verify, filters=group | private))

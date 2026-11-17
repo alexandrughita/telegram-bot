@@ -734,8 +734,15 @@ async def on_group_message(update, context):
                 await send_temporary(
                     bot, GROUP_CHAT_ID,
                     f"📣 {user.mention_html()}, ai folosit toate cele {limit} promovări disponibile în 24h. "
-                    "Ai avut acces. Acum aștepți resetarea limitei.",
+                    "Ai avut acces. Acum aștepți resetarea limitei.\n\n"
+                    "🔥 Vrei să fii găsită și în afara grupului? Creează-ți cont gratuit pe approape.ro, "
+                    "adaugă-ți profilul și datele de contact.\n"
+                    "👉 Fă pasul următor și atrage cliente direct din site.",
                     NOTICE_TTL_SECONDS,
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                        "🚀 Creează-ți cont pe approape.ro", url="https://approape.ro/"
+                    )]]),
+                    disable_web_page_preview=True,
                 )
 
         await maybe_cleanup()

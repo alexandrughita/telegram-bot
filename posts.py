@@ -159,7 +159,7 @@ def is_indexable_profile(fields):
     """Mirror the public-profile quality gate used by Nearby's sitemap generator."""
     slug = str(fields.get("slug") or "").strip().lower()
     role = str(fields.get("role") or "").strip().lower()
-    bio = re.sub(r"\\s+", " ", str(fields.get("bio") or "")).strip()
+    bio = re.sub(r"\s+", " ", str(fields.get("bio") or "")).strip()
     city = str(fields.get("citySlug") or fields.get("currentCity") or
                fields.get("creatorCity") or fields.get("address") or "").strip()
     if not slug or slug in REMOVED_PROFILE_SLUGS:

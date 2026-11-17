@@ -698,9 +698,14 @@ def test_verified_member_may_post_five_ads_a_day(env, run):
     for mid in range(1, 7):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
     assert member_deletions(env) == [6]
-    assert "ai epuizat plafonul: 5 promovări în 24h" in last_text(env)
+    assert "ai atins limita de 5 promovări în 24h" in last_text(env)
+    assert "10 promovări/zi în grup + promovare pe approape.ro" in last_text(env)
+    assert any(
+        kwargs.get("reply_markup") and "Devino TOP GIRL" in str(kwargs["reply_markup"])
+        for call in env.bot.send_message.call_args_list
+        for kwargs in [call.kwargs]
+    )
     assert "video" not in last_text(env)  # already verified: nothing to offer
-    assert bot.REAL_MESSAGES_NOTE in last_text(env)
     assert events(env, run, 90)[0] == "verify"
 
 

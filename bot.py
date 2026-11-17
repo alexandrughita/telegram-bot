@@ -39,7 +39,7 @@ MUTE_MINUTES = int(os.environ.get("MUTE_MINUTES", "60"))
 PORT = int(os.environ.get("PORT", "10000"))
 
 WELCOME_TTL_SECONDS = 180
-NOTICE_TTL_SECONDS = 60
+NOTICE_TTL_SECONDS = 180
 CACHE_TTL_SECONDS = 300
 AD_LIMIT = 1  # unverified members: one promotion per 24 hours
 VERIFIED_AD_LIMIT = 5  # verified members: five promotions per 24 hours

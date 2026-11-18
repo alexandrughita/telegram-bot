@@ -49,6 +49,10 @@ CREATE TABLE IF NOT EXISTS whitelist (
     chat_id BIGINT NOT NULL, user_id BIGINT NOT NULL, added_by BIGINT NOT NULL,
     added_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (chat_id, user_id)
 );
+CREATE TABLE IF NOT EXISTS site_top_girls (
+    chat_id BIGINT NOT NULL, user_id BIGINT NOT NULL, synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (chat_id, user_id)
+);
 CREATE TABLE IF NOT EXISTS site_verified (
     chat_id BIGINT NOT NULL, user_id BIGINT NOT NULL, synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (chat_id, user_id)
@@ -88,6 +92,7 @@ ALTER TABLE moderation_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE whitelist ENABLE ROW LEVEL SECURITY;
 ALTER TABLE verified ENABLE ROW LEVEL SECURITY;
 ALTER TABLE site_verified ENABLE ROW LEVEL SECURITY;
+ALTER TABLE site_top_girls ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_posts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bot_state ENABLE ROW LEVEL SECURITY;
 ALTER TABLE learned_ads ENABLE ROW LEVEL SECURITY;
@@ -245,6 +250,14 @@ class Store:
                 ON CONFLICT(chat_id,user_id) DO UPDATE SET synced_at=now()""",(chat_id,user_id))
         else:
             await self._execute("DELETE FROM site_verified WHERE chat_id=%s AND user_id=%s",(chat_id,user_id))
+    async def sync_site_top_girl(self,chat_id,user_id,is_top_girl):
+        existing = await self._one("SELECT 1 AS x FROM site_top_girls WHERE chat_id=%s AND user_id=%s",(chat_id,user_id))
+        if is_top_girl:
+            await self._execute("""INSERT INTO site_top_girls(chat_id,user_id) VALUES(%s,%s)
+                ON CONFLICT(chat_id,user_id) DO UPDATE SET synced_at=now()""",(chat_id,user_id))
+        else:
+            await self._execute("DELETE FROM site_top_girls WHERE chat_id=%s AND user_id=%s",(chat_id,user_id))
+        return existing is not None
     async def add_verified(self,chat_id,user_id,added_by):
         await self._execute("INSERT INTO verified(chat_id,user_id,added_by) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING",(chat_id,user_id,added_by))
     async def remove_verified(self,chat_id,user_id):

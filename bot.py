@@ -245,27 +245,18 @@ async def sync_site_member_tags(bot, user_id, current_tag=None):
     site_verified = active and profile.get("isVerified") is True
     site_top_girl = active and profile.get("isTopGirl") is True
     await store.set_site_verified(GROUP_CHAT_ID, user_id, site_verified)
-    was_site_top_girl = await store.sync_site_top_girl(GROUP_CHAT_ID, user_id, site_top_girl)
 
-    # Only tags owned by this bot are eligible for automatic replacement.
-    managed = {VERIFIED_TAG.casefold(), UNVERIFIED_TAG.casefold(), TOP_GIRL_TAG.casefold(), ""}
+    # Existing Top Girl tags are always preserved: we cannot distinguish a title
+    # assigned manually by an admin from one the bot assigned on an earlier sync.
     current = (current_tag or "").strip()
     current_folded = current.casefold()
-    manual_top_girl = current_folded == TOP_GIRL_TAG.casefold() and not was_site_top_girl
-
-    if current and current_folded not in managed:
+    managed = {VERIFIED_TAG.casefold(), UNVERIFIED_TAG.casefold(), ""}
+    if current_folded == TOP_GIRL_TAG.casefold():
         return
-    if manual_top_girl:
+    if current and current_folded not in managed:
         return
     if site_top_girl:
         await set_tag(bot, user_id, TOP_GIRL_TAG, current)
-        return
-
-    # If a previously automatic Top Girl title expires, downgrade it; a manually
-    # assigned Top Girl title is never touched.
-    if current_folded == TOP_GIRL_TAG.casefold() and was_site_top_girl:
-        next_tag = VERIFIED_TAG if await store.is_verified(GROUP_CHAT_ID, user_id) else UNVERIFIED_TAG
-        await set_tag(bot, user_id, next_tag, current)
     elif site_verified:
         await set_tag(bot, user_id, VERIFIED_TAG, current)
 

@@ -123,3 +123,25 @@ def test_away_hidden_or_inactive_profiles_are_skipped():
     assert not posts.is_listed_now({**base, "awayMode": True, "awayUntil": now + timedelta(days=1)}, now)
     assert posts.is_listed_now({**base, "awayMode": True, "awayUntil": now - timedelta(days=1)}, now)
 
+
+
+
+def test_firestore_candidate_scan_reads_multiple_pages(monkeypatch):
+    calls = []
+
+    async def fake_query(client, limit, order_field=None, slug=None, whatsapp_confirmed=None, offset=0):
+        calls.append(offset)
+        if offset == 0:
+            return [{"slug": f"profile-{i}"} for i in range(limit)]
+        return [{"slug": "last-profile"}]
+
+    monkeypatch.setattr(posts, "_query_escorts", fake_query)
+
+    class DummyClient:
+        pass
+
+    import asyncio
+    rows = asyncio.run(posts._query_all_escorts(DummyClient(), order_field="updatedAt"))
+    assert calls == [0, 200]
+    assert len(rows) == 201
+    assert rows[-1]["slug"] == "last-profile"

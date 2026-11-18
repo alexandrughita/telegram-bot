@@ -4,6 +4,7 @@ import html
 import logging
 import os
 import time
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -74,7 +75,8 @@ _admin_cache = {}
 _permissions_cache = {}
 _support_ack_at = {}
 _background = set()
-_moderation_lock = asyncio.Lock()
+# Serialize only a single member's messages; unrelated members must not queue behind each other.
+_moderation_locks = defaultdict(asyncio.Lock)
 _tick_lock = asyncio.Lock()
 _last_cleanup = 0.0
 _delete_refusal_reported = False
@@ -633,7 +635,7 @@ async def on_group_message(update, context):
     is_sticker = bool(sticker and (sticker.is_animated or sticker.is_video))
     is_static_sticker = bool(sticker) and not is_sticker
 
-    async with _moderation_lock:
+    async with _moderation_locks[user.id]:
         member = await store.get_member(GROUP_CHAT_ID, user.id)
         if member is None:
             member = await store.add_member(

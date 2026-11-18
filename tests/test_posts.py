@@ -81,7 +81,7 @@ def test_old_or_photoless_profiles_are_not_new():
 def test_caption_marks_confirmed_contact_and_tracks_the_link():
     caption = posts.profile_caption("new", profile("/creatoare/ana", confirmed=True))
     assert "Contact WhatsApp confirmat" in caption
-    assert 'href="https://www.approape.ro/creatoare/ana?utm_source=telegram' in caption
+    assert "Ia legătura cu ea" not in caption
 
 
 def test_firestore_fields_become_a_profile():

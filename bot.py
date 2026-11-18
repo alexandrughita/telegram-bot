@@ -622,11 +622,12 @@ async def on_group_message(update, context):
         return
 
     fp = fingerprint_of(message)
-    if links_to_approape(fp.urls):
-        return  # a link to approape.ro may be posted any time, by anyone in the group
-
-    # External links are advertisements.
+    # A site link is welcome on its own. Do not let it whitelist a message that also
+    # contains an unrelated external link: mixed-link messages still enter moderation.
+    internal_site_link = links_to_approape(fp.urls)
     external_link_ad = has_external_link(fp.urls)
+    if internal_site_link and not external_link_ad:
+        return
 
     sticker = message.sticker
     is_sticker = bool(sticker and (sticker.is_animated or sticker.is_video))
@@ -1004,10 +1005,10 @@ async def cmd_verify(update, context):
             "🔥 Ai confirmat că poți promova în grup. Următorul pas: construiește-ți prezența pe approape.ro.\n\n"
             "Dacă nu ai încă profil, creează-l gratuit. Dacă ai deja unul, actualizează-l și adaugă Telegram-ul "
             "în Contul meu → Telegram. Nu te limita la grup: fă-te ușor de găsit.\n"
-            "👉 https://www.aproape.ro/"
+            "👉 https://approape.ro/"
         )
         site_keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
-            "🚀 Creează-ți profilul pe approape.ro", url="https://www.aproape.ro/"
+            "🚀 Creează-ți profilul pe approape.ro", url="https://approape.ro/"
         )]])
         await bot.send_message(
             GROUP_CHAT_ID, f"🎥 {names} {verb}.\n\n{site_push}",

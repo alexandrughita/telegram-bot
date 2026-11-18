@@ -264,4 +264,14 @@ class Store:
           (SELECT COUNT(*) FROM members WHERE chat_id=%(c)s) AS members,
           (SELECT COUNT(*) FROM members WHERE chat_id=%(c)s AND unlocked) AS unlocked,
           (SELECT COUNT(*) FROM invites WHERE chat_id=%(c)s) AS invites,
-          (SELECT COUNT(*) FROM violations WHERE chat_id=%(c)s AND created_at >= now()-interval '7 days') AS violations_7d""",{"c":chat_id})
+          (SELECT COUNT(*) FROM verified WHERE chat_id=%(c)s) AS verified,
+          (SELECT COUNT(DISTINCT user_id) FROM messages WHERE chat_id=%(c)s
+             AND created_at >= now()-interval '7 days') AS active_posters_7d,
+          (SELECT COUNT(*) FROM messages WHERE chat_id=%(c)s AND is_ad
+             AND created_at >= now()-interval '24 hours') AS promotions_24h,
+          (SELECT COUNT(*) FROM moderation_events WHERE chat_id=%(c)s AND event_type='delete'
+             AND created_at >= now()-interval '7 days') AS deleted_7d,
+          (SELECT COUNT(*) FROM bot_posts WHERE chat_id=%(c)s
+             AND posted_at >= now()-interval '7 days') AS spotlights_7d,
+          (SELECT COUNT(*) FROM violations WHERE chat_id=%(c)s
+             AND created_at >= now()-interval '7 days') AS violations_7d""",{"c":chat_id})

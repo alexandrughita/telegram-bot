@@ -20,8 +20,9 @@ bot's private chat.
   admin. `/unwhitelist` brings the normal rules back. Both are logged in `moderation_events`.
 
 **Moderation** (for everyone except the group's admins, read live from Telegram)
-- A message containing a link to **approape.ro** (or a subdomain, including a link hidden
-  behind text) is exempt from every rule below.
+- A message containing only a link to **approape.ro** (or a subdomain, including a link hidden
+  behind text) is allowed. If it also contains an external link, the external link is still
+  treated as a promotion; an approape.ro link cannot be used to bypass moderation.
 - **Illegal content** (minors, pedophilia, zoophilia, gore, snuff: `ILLEGAL_RE` in
   `moderation.py`) bans the sender outright, whitelist or not, deletes all her messages and
   alerts `SUPPORT_CHAT_ID` with the text. An **age under 18** ("16 ani", "sub 18") may be
@@ -111,9 +112,12 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
   (`whatsappConfirmed` in Firestore); its caption labels that contact clearly.
 - Selection prefers a new profile from the last 30 days, then last week's popular profile
   (`/api/top-weekly`), then a recommended profile claimed by its owner and recently updated.
-- Only profiles currently listed in the site's sitemaps are eligible. Hidden, inactive,
-  deleted, banned, suspended, disabled and away profiles are skipped. A profile is not
-  repeated within 30 days.
+- Eligibility mirrors the site's public-profile quality and visibility rules using the
+  public Firestore collection (the bot does not fetch Cloudflare-protected sitemap files).
+  Hidden, inactive, deleted, banned, suspended, disabled and away profiles are skipped.
+  Candidate pools are read in 200-document pages (up to 10,000 per pool), so newer or
+  WhatsApp-confirmed profiles are not limited to the first 20/200 records. A profile is
+  not repeated within 30 days.
 - If no eligible WhatsApp-confirmed profile is available, the bot waits and retries rather
   than silently breaking the daily contact-confirmation requirement.
 - Posts run at the three Bucharest-local target slots even when the group is quiet; this
@@ -133,7 +137,7 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
 | `/start` | private | anyone — help menu (`?start=invite` → rules + invite link) |
 | `/invite`, `/status` | private | anyone — rules + invite link and how many she brought |
 | `/invite`, `/status` | group | button to the private chat |
-| `/stats` | group | admins — answered privately, the command is deleted |
+| `/stats` | group | admins — private operational snapshot: tracked/active members, verified members, invites, promotions (24h), deleted messages and violations (7d), profile spotlights (7d); command is deleted |
 | `/whitelist`, `/unwhitelist` | group, as a reply to the person or with her id | admins |
 | `/info` | group (reply or id) or private (id) | admins — status in the group, invites brought, ads used in 24h, violations |
 | `/unlock` | group (reply or id) or private (id) | admins — lifts a mute; unlike `/whitelist`, every other rule still applies |

@@ -553,7 +553,7 @@ async def handle_ad(bot, message):
                 "Creează-ți contul și intră în TOP!"
             )
             keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
-                "🚀 Devino TOP GIRL", url="https://www.approape.ro/?auth=login"
+                "🚀 Devino TOP GIRL", url="https://approape.ro/?auth=login"
             )]])
             await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS, reply_markup=keyboard)
         else:

@@ -208,51 +208,57 @@ QUERY_FIELDS = ["slug", "displayName", "role", "photos", "photoURL", "profilePho
                 "profileStatus", "visibility", "awayMode", "awayUntil", "source", "whatsappConfirmed", "updatedAt"]
 
 
-FIRESTORE_QUERY = ("https://firestore.googleapis.com/v1/projects/approape-bed86"
-                   "/databases/(default)/documents:runQuery")
+FIRESTORE_COLLECTION = (
+    "https://firestore.googleapis.com/v1/projects/approape-bed86"
+    "/databases/(default)/documents/escorts"
+)
+
+
+async def _query_all_escorts(client, order_field=None, whatsapp_confirmed=None, page_size=1000):
+    """Read public escort documents using Firestore listDocuments pagination.
+
+    listDocuments avoids the StructuredQuery validation/index errors returned by
+    runQuery here. Filtering and ordering are applied locally to the bounded result.
+    """
+    rows = []
+    page_token = None
+    for _ in range(50):  # safety ceiling: 50,000 documents
+        params = {"pageSize": min(max(int(page_size), 1), 1000)}
+        if page_token:
+            params["pageToken"] = page_token
+        resp = await client.get(FIRESTORE_COLLECTION, params=params)
+        if resp.is_error:
+            log.error("Firestore listDocuments failed (%s): %s",
+                      resp.status_code, resp.text[:1500])
+        resp.raise_for_status()
+        payload = resp.json()
+        for document in payload.get("documents", []):
+            fields = document.get("fields", {})
+            rows.append({k: _value(v) for k, v in fields.items()})
+        page_token = payload.get("nextPageToken")
+        if not page_token:
+            break
+    else:
+        log.warning("Firestore profile scan reached its 50,000-document safety ceiling")
+
+    if whatsapp_confirmed is True:
+        rows = [row for row in rows if row.get("whatsappConfirmed") is True]
+    if order_field:
+        rows.sort(key=lambda row: (
+            row.get(order_field) is not None,
+            row.get(order_field) or datetime.min.replace(tzinfo=timezone.utc),
+        ), reverse=True)
+    return rows
 
 
 async def _query_escorts(client, limit, order_field=None, slug=None, whatsapp_confirmed=None, offset=0):
-    """Public escort documents (the collection is world-readable), as plain dicts."""
-    query = {
-        "from": [{"collectionId": "escorts"}],
-        "select": {"fields": [{"fieldPath": f} for f in QUERY_FIELDS]},
-        "limit": limit,
-    }
-    if offset:
-        query["offset"] = offset
-    if order_field:
-        query["orderBy"] = [
-            {"field": {"fieldPath": order_field}, "direction": "DESCENDING"},
-            {"field": {"fieldPath": "__name__"}, "direction": "ASCENDING"},
-        ]
-    else:
-        query["orderBy"] = [{"field": {"fieldPath": "__name__"}, "direction": "ASCENDING"}]
+    """Compatibility helper for one filtered/sorted slice of public escort documents."""
+    rows = await _query_all_escorts(
+        client, order_field=order_field, whatsapp_confirmed=whatsapp_confirmed
+    )
     if slug:
-        query["where"] = {"fieldFilter": {"field": {"fieldPath": "slug"}, "op": "EQUAL",
-                                          "value": {"stringValue": slug}}}
-    elif whatsapp_confirmed is True:
-        query["where"] = {"fieldFilter": {"field": {"fieldPath": "whatsappConfirmed"}, "op": "EQUAL",
-                                          "value": {"booleanValue": True}}}
-    resp = await client.post(FIRESTORE_QUERY, json={"structuredQuery": query})
-    resp.raise_for_status()
-    return [{k: _value(v) for k, v in row["document"].get("fields", {}).items()}
-            for row in resp.json() if row.get("document")]
-
-
-async def _query_all_escorts(client, order_field=None, whatsapp_confirmed=None, page_size=200):
-    """Read the full candidate pool in bounded Firestore pages, not just its first page."""
-    rows = []
-    for page in range(50):  # safety ceiling: 10,000 documents per candidate pool
-        batch = await _query_escorts(
-            client, page_size, order_field=order_field,
-            whatsapp_confirmed=whatsapp_confirmed, offset=page * page_size,
-        )
-        rows.extend(batch)
-        if len(batch) < page_size:
-            return rows
-    log.warning("Firestore profile scan reached its 10,000-document safety ceiling")
-    return rows
+        rows = [row for row in rows if row.get("slug") == slug]
+    return rows[offset:offset + limit]
 
 
 async def fetch_site_profiles(now):

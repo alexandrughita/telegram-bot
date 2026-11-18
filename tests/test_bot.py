@@ -75,7 +75,8 @@ def env(run, monkeypatch):
     bot._admin_cache.clear()
     bot._permissions_cache.clear()
     bot._support_ack_at.clear()
-    bot._moderation_lock = asyncio.Lock()  # each test runs on its own event loop
+    # Each test has its own event loop; discard locks created by the previous loop.
+    bot._moderation_locks.clear()
     bot._tick_lock = asyncio.Lock()
     bot._delete_refusal_reported = False
     fake = FakeBot()

@@ -684,7 +684,9 @@ async def on_group_message(update, context):
             # Once tagged, only a duplicate/near-copy of a message already marked as an ad
             # (or explicitly learned by an admin) counts as another promotion. New chat,
             # replies and unrelated messages are left alone, even if they contain a link.
-            is_ad = external_link_ad or text_ad or any(\n                same_ad_text(fp.text, normalize_text(old)) for old in learned_ads\n            )
+            is_ad = external_link_ad or text_ad or any(
+                same_ad_text(fp.text, normalize_text(old)) for old in learned_ads
+            )
         else:
             unverified_hint = not verified and unverified_ad(text)
             is_ad = unverified_hint or external_link_ad or text_ad or content_ad(

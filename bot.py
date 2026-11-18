@@ -33,7 +33,7 @@ TICK_SECRET = os.environ.get("TICK_SECRET", "")
 GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID") or 0)
 SUPPORT_CHAT_ID = int(os.environ.get("SUPPORT_CHAT_ID") or 0)
 GROUP_INVITE_URL = os.environ.get("GROUP_INVITE_URL", "").strip()
-APPROAPE_API_URL = os.environ.get("APPROAPE_API_URL", "https://www.approape.ro/api/claim-profile?mode=telegram-bot-profile").rstrip("/")
+APPROAPE_API_URL = os.environ.get("APPROAPE_API_URL", "https://www.approape.ro/api/claim-profile?mode=telegram-bot-profile")
 APPROAPE_BOT_API_KEY = os.environ.get("APPROAPE_BOT_API_KEY", "")
 
 DUPLICATE_COOLDOWN_HOURS = float(os.environ.get("DUPLICATE_COOLDOWN_HOURS", "6"))
@@ -74,6 +74,7 @@ FALLBACK_POSTING = ChatPermissions(
     can_add_web_page_previews=True, can_invite_users=True,
 )
 _admin_cache = {}
+_site_profile_cache = {}
 _permissions_cache = {}
 _support_ack_at = {}
 _background = set()
@@ -203,6 +204,70 @@ async def tag_advertiser(bot, message):
     user_id = message.from_user.id
     tag = VERIFIED_TAG if await store.is_verified(GROUP_CHAT_ID, user_id) else UNVERIFIED_TAG
     await set_tag(bot, user_id, tag, message.api_kwargs.get("sender_tag"))
+
+
+async def fetch_site_profile(telegram_id):
+    """Fetch the profile linked to this Telegram account; never search by username."""
+    if not APPROAPE_BOT_API_KEY:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.post(
+                APPROAPE_API_URL,
+                params={"telegram_id": str(telegram_id)},
+                headers={"Authorization": f"Bearer {APPROAPE_BOT_API_KEY}"},
+            )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        payload = response.json()
+        return payload.get("profile") if payload.get("linked") and payload.get("hasProfile") else None
+    except Exception as exc:
+        log.info("Approape profile sync unavailable for %s: %s", telegram_id, exc)
+        return None
+
+
+async def sync_site_member_tags(bot, user_id, current_tag=None):
+    """Sync site verification/weekly Top Girl while preserving manually assigned Telegram tags."""
+    now = time.monotonic()
+    cached = _site_profile_cache.get(user_id)
+    if cached and cached[0] > now:
+        profile = cached[1]
+    else:
+        profile = await fetch_site_profile(user_id)
+        _site_profile_cache[user_id] = (now + 300, profile)
+
+    # A failed or unlinked lookup must never revoke a manually granted Telegram status.
+    if profile is None:
+        return
+
+    active = profile.get("status") == "active"
+    site_verified = active and profile.get("isVerified") is True
+    site_top_girl = active and profile.get("isTopGirl") is True
+    await store.set_site_verified(GROUP_CHAT_ID, user_id, site_verified)
+    was_site_top_girl = await store.sync_site_top_girl(GROUP_CHAT_ID, user_id, site_top_girl)
+
+    # Only tags owned by this bot are eligible for automatic replacement.
+    managed = {VERIFIED_TAG.casefold(), UNVERIFIED_TAG.casefold(), TOP_GIRL_TAG.casefold(), ""}
+    current = (current_tag or "").strip()
+    current_folded = current.casefold()
+    manual_top_girl = current_folded == TOP_GIRL_TAG.casefold() and not was_site_top_girl
+
+    if current and current_folded not in managed:
+        return
+    if manual_top_girl:
+        return
+    if site_top_girl:
+        await set_tag(bot, user_id, TOP_GIRL_TAG, current)
+        return
+
+    # If a previously automatic Top Girl title expires, downgrade it; a manually
+    # assigned Top Girl title is never touched.
+    if current_folded == TOP_GIRL_TAG.casefold() and was_site_top_girl:
+        next_tag = VERIFIED_TAG if await store.is_verified(GROUP_CHAT_ID, user_id) else UNVERIFIED_TAG
+        await set_tag(bot, user_id, next_tag, current)
+    elif site_verified:
+        await set_tag(bot, user_id, VERIFIED_TAG, current)
 
 
 async def is_admin(bot, chat_id, user_id):
@@ -659,6 +724,8 @@ async def on_group_message(update, context):
     user = message.from_user
     if not user or user.is_bot or await is_admin(bot, GROUP_CHAT_ID, user.id):
         return
+
+    await sync_site_member_tags(bot, user.id, message.api_kwargs.get("sender_tag"))
 
     # Illegal content (minors, gore…) is banned outright, whitelist or not. An age under 18
     # may be legal ("nu accept sub 18 ani"), so it is deleted and left to a person.

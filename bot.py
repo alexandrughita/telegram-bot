@@ -906,7 +906,7 @@ async def on_support_reply(update, context):
 async def post_profile(bot, kind, profile):
     caption = posts.profile_caption(kind, profile)
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
-        "💬 Ia legătura cu ea", url=posts.profile_url(profile)
+        "Ia legătura cu ea 💬", url=posts.profile_url(profile)
     )]])
     try:
         async with httpx.AsyncClient(timeout=20) as client:

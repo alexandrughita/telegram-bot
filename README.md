@@ -88,6 +88,11 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
     SELECT created_at, event_type, reason FROM moderation_events
     WHERE user_id = <id> ORDER BY created_at DESC;
 
+**Approape.ro profile link**
+- In the private chat, `/profil` checks the sender's own Telegram account against the site's authenticated Telegram link and shows whether a profile is active, its public URL and WhatsApp-confirmed state.
+- Configure `APPROAPE_API_URL=https://www.approape.ro/api/telegram-bot` and `APPROAPE_BOT_API_KEY` on Render. Set the same secret as `TELEGRAM_BOT_API_KEY` in the Nearby/Vercel production environment. The endpoint fails closed without the shared secret and returns only minimal profile status data.
+- Users connect Telegram from approape.ro → Contul meu → Telegram. The bot never searches profiles by username and never exposes another member's profile details.
+
 **Help desk**
 - `/start` with no topic shows a menu: *Nu primesc SMS-ul* (answers with the Google sign-in
   workaround), *Revendicare profil* (same as the `revendicare` topic below, support is

@@ -33,6 +33,8 @@ TICK_SECRET = os.environ.get("TICK_SECRET", "")
 GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID") or 0)
 SUPPORT_CHAT_ID = int(os.environ.get("SUPPORT_CHAT_ID") or 0)
 GROUP_INVITE_URL = os.environ.get("GROUP_INVITE_URL", "").strip()
+APPROAPE_API_URL = os.environ.get("APPROAPE_API_URL", "https://www.approape.ro/api/telegram-bot").rstrip("/")
+APPROAPE_BOT_API_KEY = os.environ.get("APPROAPE_BOT_API_KEY", "")
 
 DUPLICATE_COOLDOWN_HOURS = float(os.environ.get("DUPLICATE_COOLDOWN_HOURS", "6"))
 VIOLATION_WINDOW_HOURS = float(os.environ.get("VIOLATION_WINDOW_HOURS", "48"))
@@ -389,6 +391,62 @@ async def help_topic(update, context, key):
             f"Vine de pe site: {support_note}. Răspunde cu reply aici.",
         )
         await store.save_support_thread(note.message_id, user.id)
+
+
+async def cmd_profil(update, context):
+    """Show only the profile linked to the sender's own Telegram account."""
+    user = update.effective_user
+    if not user:
+        return
+    if not APPROAPE_BOT_API_KEY:
+        await update.effective_message.reply_text(
+            "Conectarea cu approape.ro nu este configurată încă. Încearcă din nou mai târziu."
+        )
+        return
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(
+                APPROAPE_API_URL,
+                params={"telegram_id": str(user.id)},
+                headers={"Authorization": f"Bearer {APPROAPE_BOT_API_KEY}"},
+            )
+        if response.status_code == 404:
+            await update.effective_message.reply_text(
+                "Nu găsesc încă un cont approape.ro conectat la acest Telegram. "
+                "Intră pe site, conectează Telegram din Contul meu → Telegram, apoi încearcă din nou /profil."
+            )
+            return
+        response.raise_for_status()
+        payload = response.json()
+        profile = payload.get("profile")
+        if not payload.get("linked"):
+            await update.effective_message.reply_text("Contul Telegram nu este conectat la approape.ro.")
+        elif not payload.get("hasProfile") or not profile:
+            await update.effective_message.reply_text(
+                "Contul este conectat, dar nu are încă un profil public pe approape.ro."
+            )
+        else:
+            status = {
+                "active": "Activ",
+                "inactive": "Inactiv / retras",
+                "incomplete": "Incomplet",
+                "not_a_profile": "Nu este profil de promovare",
+            }.get(profile.get("status"), "Necunoscut")
+            role = "Creatoare" if profile.get("role") == "creatoare" else "Profil"
+            slug = profile.get("slug") or ""
+            path = "creatoare" if profile.get("role") == "creatoare" else "escorte"
+            link = f"https://www.approape.ro/{path}/{slug}" if slug else ""
+            lines = [f"📋 {role} approape.ro", f"Status: {status}"]
+            if link:
+                lines.append(f"Profil: {link}")
+            lines.append("WhatsApp confirmat: " + ("Da" if profile.get("whatsappConfirmed") else "Nu"))
+            await update.effective_message.reply_text("\n".join(lines), disable_web_page_preview=True)
+    except httpx.HTTPStatusError as exc:
+        log.warning("Approape profile lookup returned %s", exc.response.status_code)
+        await update.effective_message.reply_text("Nu am putut verifica profilul acum. Încearcă din nou mai târziu.")
+    except Exception as exc:
+        log.warning("Approape profile lookup failed: %s", exc)
+        await update.effective_message.reply_text("Nu am putut contacta approape.ro acum. Încearcă din nou mai târziu.")
 
 
 async def cmd_start(update, context):
@@ -1401,6 +1459,7 @@ def build_application():
     application.add_handler(CommandHandler(["nupromovare", "nureclama"], cmd_unmark_ad, filters=group | private))
     application.add_handler(CommandHandler("ban", cmd_ban, filters=group | private))
     application.add_handler(CommandHandler("start", cmd_start, filters=private))
+    application.add_handler(CommandHandler("profil", cmd_profil, filters=private))
     application.add_handler(CallbackQueryHandler(on_ad_reminder, pattern=r"^adreminder:"))
     application.add_handler(CallbackQueryHandler(on_menu, pattern=r"^menu:"))
     application.add_handler(CommandHandler(["invite", "status"], invite_status, filters=private))

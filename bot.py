@@ -33,7 +33,7 @@ TICK_SECRET = os.environ.get("TICK_SECRET", "")
 GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID") or 0)
 SUPPORT_CHAT_ID = int(os.environ.get("SUPPORT_CHAT_ID") or 0)
 GROUP_INVITE_URL = os.environ.get("GROUP_INVITE_URL", "").strip()
-APPROAPE_API_URL = os.environ.get("APPROAPE_API_URL", "https://www.approape.ro/api/telegram-bot").rstrip("/")
+APPROAPE_API_URL = os.environ.get("APPROAPE_API_URL", "https://www.approape.ro/api/claim-profile?mode=telegram-bot-profile").rstrip("/")
 APPROAPE_BOT_API_KEY = os.environ.get("APPROAPE_BOT_API_KEY", "")
 
 DUPLICATE_COOLDOWN_HOURS = float(os.environ.get("DUPLICATE_COOLDOWN_HOURS", "6"))
@@ -405,7 +405,7 @@ async def cmd_profil(update, context):
         return
     try:
         async with httpx.AsyncClient(timeout=8.0) as client:
-            response = await client.get(
+            response = await client.post(
                 APPROAPE_API_URL,
                 params={"telegram_id": str(user.id)},
                 headers={"Authorization": f"Bearer {APPROAPE_BOT_API_KEY}"},

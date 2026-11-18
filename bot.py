@@ -905,13 +905,16 @@ async def on_support_reply(update, context):
 
 async def post_profile(bot, kind, profile):
     caption = posts.profile_caption(kind, profile)
+    keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
+        "💬 Ia legătura cu ea", url=posts.profile_url(profile)
+    )]])
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.get(profile.photo)
             resp.raise_for_status()
-        await bot.send_photo(GROUP_CHAT_ID, photo=resp.content, caption=caption, parse_mode="HTML")
+        await bot.send_photo(GROUP_CHAT_ID, photo=resp.content, caption=caption, parse_mode="HTML", reply_markup=keyboard)
     except Exception:
-        await bot.send_message(GROUP_CHAT_ID, caption, parse_mode="HTML")
+        await bot.send_message(GROUP_CHAT_ID, caption, parse_mode="HTML", reply_markup=keyboard)
 
 
 async def run_ad_reminders(bot):

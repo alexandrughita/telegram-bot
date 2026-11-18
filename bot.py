@@ -549,7 +549,7 @@ async def handle_ad(bot, message):
             notice = (
                 f"👑 {user.mention_html()}, ai atins limita de {limit} promovări în 24h. "
                 f"Revii {friendly_when(retry, datetime.now(timezone.utc))}.\n\n"
-                "Vrei promovare dublă? Devino TOP GIRL: 10 promovări/zi în grup + promovare pe www.approape.ro. "
+                "Vrei promovare dublă? Devino TOP GIRL: 10 promovări/zi în grup + promovare pe approape.ro. "
                 "Creează-ți contul și intră în TOP!"
             )
             keyboard = InlineKeyboardMarkup([[InlineKeyboardButton(
@@ -1071,7 +1071,7 @@ async def cmd_mark_ad(update, context):
         await admin_reply(update, bot, f"{name} e admin, pe lista albă sau Top Girl: limita de promovări nu i se aplică."
                           + learned_words)
         return
-    async with _moderation_lock:
+    async with _moderation_locks[user.id]:
         await tag_advertiser(bot, ad)
         saved = await store.find_message(GROUP_CHAT_ID, ad.message_id)
         if saved and saved["is_ad"]:

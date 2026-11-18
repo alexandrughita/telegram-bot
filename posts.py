@@ -219,7 +219,12 @@ async def _query_escorts(client, limit, order_field=None, slug=None, whatsapp_co
     if offset:
         query["offset"] = offset
     if order_field:
-        query["orderBy"] = [{"field": {"fieldPath": order_field}, "direction": "DESCENDING"}]
+        query["orderBy"] = [
+            {"field": {"fieldPath": order_field}, "direction": "DESCENDING"},
+            {"field": {"fieldPath": "__name__"}, "direction": "ASCENDING"},
+        ]
+    else:
+        query["orderBy"] = [{"field": {"fieldPath": "__name__"}, "direction": "ASCENDING"}]
     if slug:
         query["where"] = {"fieldFilter": {"field": {"fieldPath": "slug"}, "op": "EQUAL",
                                           "value": {"stringValue": slug}}}

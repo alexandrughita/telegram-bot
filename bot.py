@@ -504,6 +504,8 @@ async def cmd_profil(update, context):
             lines = [f"📋 {role} approape.ro", f"Status: {status}"]
             if link:
                 lines.append(f"Profil: {link}")
+            lines.append("Verificat pe site: " + ("Da" if profile.get("isVerified") else "Nu"))
+            lines.append("Top Girl pe site: " + ("Da" if profile.get("isTopGirl") else "Nu"))
             lines.append("WhatsApp confirmat: " + ("Da" if profile.get("whatsappConfirmed") else "Nu"))
             await update.effective_message.reply_text("\n".join(lines), disable_web_page_preview=True)
     except httpx.HTTPStatusError as exc:

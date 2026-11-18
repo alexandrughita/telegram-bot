@@ -129,19 +129,71 @@ def test_away_hidden_or_inactive_profiles_are_skipped():
 def test_firestore_candidate_scan_reads_multiple_pages(monkeypatch):
     calls = []
 
-    async def fake_query(client, limit, order_field=None, slug=None, whatsapp_confirmed=None, offset=0):
-        calls.append(offset)
-        if offset == 0:
-            return [{"slug": f"profile-{i}"} for i in range(limit)]
-        return [{"slug": "last-profile"}]
+    class FakeResponse:
+        is_error = False
+        status_code = 200
+        text = ""
 
-    monkeypatch.setattr(posts, "_query_escorts", fake_query)
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self.payload
 
     class DummyClient:
-        pass
+        async def get(self, url, params):
+            calls.append(params.copy())
+            if len(calls) == 1:
+                return FakeResponse({
+                    "documents": [
+                        {"fields": {"slug": {"stringValue": f"profile-{i}"}}}
+                        for i in range(2)
+                    ],
+                    "nextPageToken": "next-page",
+                })
+            return FakeResponse({
+                "documents": [
+                    {"fields": {"slug": {"stringValue": "last-profile"}}}
+                ]
+            })
 
     import asyncio
-    rows = asyncio.run(posts._query_all_escorts(DummyClient(), order_field="updatedAt"))
-    assert calls == [0, 200]
-    assert len(rows) == 201
-    assert rows[-1]["slug"] == "last-profile"
+    rows = asyncio.run(posts._query_all_escorts(DummyClient(), page_size=2))
+    assert calls == [{"pageSize": 2}, {"pageSize": 2, "pageToken": "next-page"}]
+    assert [row["slug"] for row in rows] == ["profile-0", "profile-1", "last-profile"]
+
+
+def test_firestore_candidate_scan_filters_and_sorts_locally(monkeypatch):
+    import asyncio
+
+    class FakeResponse:
+        is_error = False
+        status_code = 200
+        text = ""
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {
+                "documents": [
+                    {"fields": {"slug": {"stringValue": "older"},
+                                "createdAt": {"timestampValue": "2026-01-01T00:00:00Z"},
+                                "whatsappConfirmed": {"booleanValue": True}}},
+                    {"fields": {"slug": {"stringValue": "newer"},
+                                "createdAt": {"timestampValue": "2026-02-01T00:00:00Z"},
+                                "whatsappConfirmed": {"booleanValue": False}}},
+                ]
+            }
+
+    class DummyClient:
+        async def get(self, url, params):
+            return FakeResponse()
+
+    rows = asyncio.run(posts._query_all_escorts(
+        DummyClient(), order_field="createdAt", whatsapp_confirmed=True
+    ))
+    assert [row["slug"] for row in rows] == ["older"]

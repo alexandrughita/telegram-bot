@@ -1372,8 +1372,11 @@ async def cmd_stats(update, context):
     s = await store.stats(GROUP_CHAT_ID)
     await admin_reply(
         update, context.bot,
-        f"📊 Membri urmăriți: {s['members']}\n"
-        f"Invitații: {s['invites']}\nAbateri (7 zile): {s['violations_7d']}"
+        f"📊 Membri urmăriți: {s['members']} (activi cu mesaje în 7 zile: {s['active_posters_7d']})\n"
+        f"Verificate: {s['verified']} · Invitații: {s['invites']}\n"
+        f"Promovări în 24h: {s['promotions_24h']}\n"
+        f"Mesaje șterse (7 zile): {s['deleted_7d']} · Abateri (7 zile): {s['violations_7d']}\n"
+        f"Spotlight-uri publicate (7 zile): {s['spotlights_7d']}"
     )
 
 

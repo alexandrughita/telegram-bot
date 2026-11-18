@@ -101,12 +101,12 @@ def profile_caption(kind, profile):
     name, city = html.escape(profile.name), html.escape(profile.city)
     where = f", {city}" if city else ""
     heading = {
-        "new": "✨ Profil nou pe approape.ro",
+        "new": "❤️ Profil nou pe approape.ro",
         "top": "🏆 Profil popular săptămâna trecută",
-        "recommended": "💫 Profil recomandat approape.ro",
+        "recommended": "❤️ Profil recomandat approape.ro",
     }[kind]
     contact = "\n📲 Contact WhatsApp confirmat" if profile.whatsapp_confirmed else ""
-    return f"{heading}\n<b>{name}</b>{where}{contact}"
+    return f'{heading}\n<b>{name}</b>{where}{contact}\n<a href="{profile_url(profile)}">Ia legătura cu ea</a>'
 
 
 # ------------------------------------------------------------

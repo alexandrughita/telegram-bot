@@ -4,6 +4,7 @@ The bot cannot wake itself on Render Free, so an external cron calls /tick every
 minutes; each call keeps the service awake and asks `due` whether it is time to post.
 """
 import html
+import logging
 import random
 import re
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 SITE = "https://www.approape.ro"
+log = logging.getLogger("telegram-bot.posts")
 LOCAL_TZ = ZoneInfo("Europe/Bucharest")
 # Three profile spotlights per Bucharest calendar day; quiet hours remain 01:00–10:00.
 DAY_START_HOUR = 10
@@ -200,20 +202,22 @@ def sitemap_paths(xml):
 QUERY_FIELDS = ["slug", "displayName", "role", "photos", "photoURL", "profilePhotoUrl", "photoUrl",
                 "bio", "citySlug", "address", "currentCity", "creatorCity", "createdAt", "isActive",
                 "isHidden", "isDeleted", "banned", "suspended", "disabled", "deletedAt", "status",
-                "profileStatus", "visibility", "awayMode", "awayUntil", "source", "whatsappConfirmed"]
+                "profileStatus", "visibility", "awayMode", "awayUntil", "source", "whatsappConfirmed", "updatedAt"]
 
 
 FIRESTORE_QUERY = ("https://firestore.googleapis.com/v1/projects/approape-bed86"
                    "/databases/(default)/documents:runQuery")
 
 
-async def _query_escorts(client, limit, order_field=None, slug=None, whatsapp_confirmed=None):
+async def _query_escorts(client, limit, order_field=None, slug=None, whatsapp_confirmed=None, offset=0):
     """Public escort documents (the collection is world-readable), as plain dicts."""
     query = {
         "from": [{"collectionId": "escorts"}],
         "select": {"fields": [{"fieldPath": f} for f in QUERY_FIELDS]},
         "limit": limit,
     }
+    if offset:
+        query["offset"] = offset
     if order_field:
         query["orderBy"] = [{"field": {"fieldPath": order_field}, "direction": "DESCENDING"}]
     if slug:
@@ -226,6 +230,21 @@ async def _query_escorts(client, limit, order_field=None, slug=None, whatsapp_co
     resp.raise_for_status()
     return [{k: _value(v) for k, v in row["document"].get("fields", {}).items()}
             for row in resp.json() if row.get("document")]
+
+
+async def _query_all_escorts(client, order_field=None, whatsapp_confirmed=None, page_size=200):
+    """Read the full candidate pool in bounded Firestore pages, not just its first page."""
+    rows = []
+    for page in range(50):  # safety ceiling: 10,000 documents per candidate pool
+        batch = await _query_escorts(
+            client, page_size, order_field=order_field,
+            whatsapp_confirmed=whatsapp_confirmed, offset=page * page_size,
+        )
+        rows.extend(batch)
+        if len(batch) < page_size:
+            return rows
+    log.warning("Firestore profile scan reached its 10,000-document safety ceiling")
+    return rows
 
 
 async def fetch_site_profiles(now):
@@ -248,13 +267,13 @@ async def fetch_site_profiles(now):
                     profiles.append(profile)
             return profiles
 
-        new = usable(await _query_escorts(client, 20, order_field="createdAt"))
+        new = usable(await _query_all_escorts(client, order_field="createdAt"))
         # Recommended: profiles their owners keep up to date, never imported ones.
         # Filtered here rather than in the query, which would need a composite index.
-        recommended = usable(await _query_escorts(client, 200, order_field="updatedAt"), claimed_only=True)
+        recommended = usable(await _query_all_escorts(client, order_field="updatedAt"), claimed_only=True)
         # Contact-confirmed profiles are an independent candidate pool: do not let the
         # claimed-only recommendation filter make the daily confirmed-contact slot impossible.
-        confirmed = usable(await _query_escorts(client, 200, whatsapp_confirmed=True))
+        confirmed = usable(await _query_all_escorts(client, whatsapp_confirmed=True))
         known_paths = {profile.path for profile in recommended}
         recommended.extend(profile for profile in confirmed if profile.path not in known_paths)
 

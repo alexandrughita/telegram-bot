@@ -332,7 +332,7 @@ async def invite_status(update, context):
         f"🔥 Ești în joc. Acum joacă inteligent.\n\n"
         f"Limita ta: {ad_rule}. Reclamele peste limită se șterg. "
         f"Maximum {STICKERS_PER_DAY} stickere pe zi; fără duplicate de poze, linkuri sau numere.\n\n"
-        f"Vrei să crești grupul? Invită oameni cu linkul tău:\n{link}\n👥 Ai adus: {count}",
+        f"Linkul tău de invitație: {link}\n\nVrei să crești grupul? Invită oameni cu el.\n👥 Ai adus: {count}",
         disable_web_page_preview=True,
     )
 

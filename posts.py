@@ -168,6 +168,9 @@ def is_indexable_profile(fields):
         return False
     if role in {"client", "admin"}:
         return False
+    if any(str(fields.get(k) or "").strip().lower() in BLOCKED_PROFILE_VALUES
+           for k in ("status", "profileStatus", "visibility")):
+        return False
     if not str(fields.get("displayName") or "").strip():
         return False
     if not first_photo(fields):

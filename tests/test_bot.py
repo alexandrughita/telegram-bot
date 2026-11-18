@@ -754,7 +754,7 @@ def test_verifica_announces_her_in_the_group_for_good(env, run):
     private_nudge = next(c for c in env.bot.send_message.call_args_list if c.args[0] == 90)
     assert "a fost verificată" in group_announce.args[1]
     assert "approape.ro" in group_announce.args[1] and "approape.ro" in private_nudge.args[1]
-    assert group_announce.kwargs["reply_markup"].inline_keyboard[0][0].url == "https://www.aproape.ro/"
+    assert group_announce.kwargs["reply_markup"].inline_keyboard[0][0].url == "https://approape.ro/"
     run(asyncio.sleep(0))
     assert member_deletions(env) == []  # the announcement is never scheduled for deletion
 

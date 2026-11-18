@@ -259,6 +259,7 @@ AD = "Acesta este un anunt suficient de lung"
 
 def test_the_same_text_posted_again_the_same_day_is_deleted(env, run):
     posting_member(env, run, 90)
+    run(env.store.add_learned_ad(G, AD, ADMIN_ID))
     message(env, run, 90, AD, mid=1)
     message(env, run, 90, AD, mid=2)
     assert run(env.store.recent_ad_count(G, 90, 24)) == 1
@@ -270,6 +271,7 @@ def test_the_same_text_posted_again_the_same_day_is_deleted(env, run):
 def test_the_same_text_hours_apart_still_counts(env, run):
     # The duplicate check only looks back 6h; the ad limit must see the whole day.
     posting_member(env, run, 90)
+    run(env.store.add_learned_ad(G, AD, ADMIN_ID))
     message(env, run, 90, AD, mid=1)
     run(env.store._execute("UPDATE messages SET created_at = now() - interval '7 hours'"))
     message(env, run, 90, AD, mid=2)
@@ -498,7 +500,7 @@ def test_hidden_link_counts_as_a_link(env, run):
             entities=[{"type": "text_link", "offset": 0, "length": 4, "url": "https://x.ro/a"}])
     message(env, run, 90, "detalii", mid=2,
             entities=[{"type": "text_link", "offset": 0, "length": 7, "url": "https://www.x.ro/a/"}])
-    assert member_deletions(env) == [1, 2]
+    assert member_deletions(env) == [2]
 
 
 def test_help_message_reaches_support_and_reply_comes_back(env, run):
@@ -519,10 +521,11 @@ def test_help_message_reaches_support_and_reply_comes_back(env, run):
 def test_a_deleted_ad_reaches_support_and_a_reply_reaches_her(env, run):
     posting_member(env, run, 90)
     message(env, run, 90, "Anunt, vezi https://example.com/1", mid=1)
-    assert member_deletions(env) == [1]
+    message(env, run, 90, "Alt anunt, vezi https://example.com/2", mid=2)
+    assert member_deletions(env) == [2]
     header = next(c for c in env.bot.send_message.call_args_list if c.args[0] == S)
     assert "Promovare ștearsă" in header.args[1] and "id 90" in header.args[1]
-    env.bot.copy_message.assert_awaited_once_with(S, G, 1)
+    env.bot.copy_message.assert_awaited_once_with(S, G, 2)
     assert header.kwargs["reply_to_message_id"] == 501
 
     reply = Update.de_json({"update_id": 5, "message": {
@@ -674,6 +677,7 @@ def test_whitelisted_member_skips_every_rule(env, run):
 def test_unwhitelist_brings_the_rules_back(env, run):
     group_command(env, run, ADMIN_ID, "/whitelist 90")
     group_command(env, run, ADMIN_ID, "/unwhitelist", reply_to_uid=90)
+    run(env.store.add_learned_ad(G, AD, ADMIN_ID))
     for mid in (1, 2):
         message(env, run, 90, AD, mid=mid)
     assert member_deletions(env) == [2]
@@ -813,7 +817,7 @@ def test_reclama_deletes_the_ad_when_verified_member_has_used_five(env, run):
     message(env, run, 90, MISSED_AD, mid=29)
     group_command(env, run, ADMIN_ID, "/reclama", reply_to_uid=90, handler=bot.cmd_mark_ad)
     assert member_deletions(env) == [29]
-    assert any("ai epuizat plafonul: 5 promovări în 24h" in c.args[1] for c in env.bot.send_message.call_args_list)
+    assert any("ai atins limita de 5 promovări în 24h" in c.args[1] for c in env.bot.send_message.call_args_list)
 
 
 def test_reclama_on_an_ad_already_counted_changes_nothing(env, run):
@@ -861,10 +865,10 @@ def test_a_refused_delete_is_logged_as_such_and_support_told_once(env, run):
     env.bot.delete_message = AsyncMock(side_effect=delete)
     for mid in (1, 2, 3):
         message(env, run, 90, f"Anunt numarul {mid}, vezi https://example.com/{mid}", mid=mid)
-    assert events(env, run, 90) == ["delete_failed"] * 3
+    assert events(env, run, 90) == ["delete_failed"] * 2
     alerts = [c for c in env.bot.send_message.call_args_list if c.args[0] == S]
     assert len(alerts) == 1 and "Delete messages" in alerts[0].args[1]
-    assert [c.args for c in env.bot.delete_message.call_args_list if c.args[0] == S] == [(S, 501)] * 3
+    assert [c.args for c in env.bot.delete_message.call_args_list if c.args[0] == S] == [(S, 501)] * 2
 
 
 def test_ads_detected_by_content_are_blocked_for_unverified_members(env, run):
@@ -913,7 +917,7 @@ def test_reclama_words_become_keywords_with_or_without_a_reply(env, run):
     assert run(env.store.ad_keywords(G)) == ["videocall"]  # "cam" is too short to be safe
     message(env, run, 91, "Fac video-call seara", mid=1)
     message(env, run, 91, "Și video call dimineața", mid=2)
-    assert member_deletions(env) == [1, 2]
+    assert member_deletions(env) == [2]
 
 
 def test_nureclama_forgets_the_learned_text_and_uncounts_the_message(env, run):
@@ -1140,6 +1144,7 @@ def test_info_and_unlock_are_admin_only(env, run):
 def test_unlock_lifts_a_mute_but_keeps_the_other_rules(env, run):
     group_command(env, run, ADMIN_ID, "/unlock 91", handler=bot.cmd_unlock)
     assert env.bot.posting_unlocked(91)
+    run(env.store.add_learned_ad(G, AD, ADMIN_ID))
     for mid in (1, 2):
         message(env, run, 91, AD, mid=mid)
     assert member_deletions(env) == [2]

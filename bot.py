@@ -228,7 +228,7 @@ async def fetch_site_profile(telegram_id):
 
 
 async def sync_site_member_tags(bot, user_id, current_tag=None):
-    """Sync site verification/weekly Top Girl while preserving manually assigned Telegram tags."""
+    """Synchronize site verification/Top Girl tags without overwriting unrelated manual tags."""
     now = time.monotonic()
     cached = _site_profile_cache.get(user_id)
     if cached and cached[0] > now:
@@ -236,29 +236,44 @@ async def sync_site_member_tags(bot, user_id, current_tag=None):
     else:
         profile = await fetch_site_profile(user_id)
         _site_profile_cache[user_id] = (now + 300, profile)
-
-    # A failed or unlinked lookup must never revoke a manually granted Telegram status.
     if profile is None:
         return
 
     active = profile.get("status") == "active"
     site_verified = active and profile.get("isVerified") is True
     site_top_girl = active and profile.get("isTopGirl") is True
+    previously_site_top = await store.sync_site_top_girl(GROUP_CHAT_ID, user_id, site_top_girl)
+    previously_site_verified = await store.site_verified_exists(GROUP_CHAT_ID, user_id)
     await store.set_site_verified(GROUP_CHAT_ID, user_id, site_verified)
 
-    # Existing Top Girl tags are always preserved: we cannot distinguish a title
-    # assigned manually by an admin from one the bot assigned on an earlier sync.
     current = (current_tag or "").strip()
-    current_folded = current.casefold()
+    folded = current.casefold()
     managed = {VERIFIED_TAG.casefold(), UNVERIFIED_TAG.casefold(), ""}
-    if current_folded == TOP_GIRL_TAG.casefold():
+    if current and folded not in managed and folded != TOP_GIRL_TAG.casefold() and not previously_site_top and not previously_site_verified:
         return
-    if current and current_folded not in managed:
+    if folded == TOP_GIRL_TAG.casefold() and not previously_site_top and not site_top_girl:
         return
-    if site_top_girl:
-        await set_tag(bot, user_id, TOP_GIRL_TAG, current)
-    elif site_verified:
-        await set_tag(bot, user_id, VERIFIED_TAG, current)
+    target = TOP_GIRL_TAG if site_top_girl else (VERIFIED_TAG if site_verified else UNVERIFIED_TAG)
+    if current != target:
+        await set_tag(bot, user_id, target, current or None)
+
+
+async def reconcile_all_site_member_tags(bot):
+    """Daily sweep of known group members; lookup failures never revoke tags."""
+    members = await store.all_members(GROUP_CHAT_ID)
+    checked = failures = 0
+    for row in members:
+        user_id = row["user_id"]
+        try:
+            cm = await bot.get_chat_member(GROUP_CHAT_ID, user_id)
+            current = getattr(cm, "sender_tag", None) or getattr(cm, "api_kwargs", {}).get("sender_tag")
+            await sync_site_member_tags(bot, user_id, current)
+            checked += 1
+        except Exception as exc:
+            failures += 1
+            log.warning("Daily site-tag reconciliation failed for %s: %s", user_id, exc)
+    log.info("Daily site-tag reconciliation: checked=%s failures=%s", checked, failures)
+    return checked, failures
 
 
 async def is_admin(bot, chat_id, user_id):
@@ -951,6 +966,14 @@ async def run_ad_reminders(bot):
 
 async def run_tick(bot):
     async with _tick_lock:
+        sync_at = await store.get_time("site_tag_sync_at")
+        now_sync = datetime.now(timezone.utc)
+        if sync_at is None or now_sync - sync_at >= timedelta(hours=24):
+            try:
+                await reconcile_all_site_member_tags(bot)
+                await store.set_time("site_tag_sync_at", now_sync)
+            except Exception as exc:
+                log.warning("Daily site-tag reconciliation failed: %s", exc)
         await run_ad_reminders(bot)
         now = datetime.now(timezone.utc)
         stats = await store.daily_post_stats(GROUP_CHAT_ID)

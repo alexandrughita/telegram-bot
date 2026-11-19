@@ -274,12 +274,20 @@ async def fetch_all_site_telegram_profiles():
 async def reconcile_all_site_member_tags(bot):
     """Sweep site-linked IDs (primary source), plus previously observed group IDs."""
     site_profiles = await fetch_all_site_telegram_profiles()
-    ids = {int(row["telegram_id"]) for row in site_profiles if str(row.get("telegram_id", "")).isdigit()}
+    profiles_by_id = {int(row["telegram_id"]): row for row in site_profiles if str(row.get("telegram_id", "")).isdigit()}
+    ids = set(profiles_by_id)
     # Supplemental list only; the site API remains the primary source.
     ids.update(int(row["user_id"]) for row in await store.all_members(GROUP_CHAT_ID))
     checked = failures = skipped = 0
     for user_id in sorted(ids):
-        _site_profile_cache.pop(user_id, None)
+        row = profiles_by_id.get(user_id)
+        if row:
+            # Seed the normal sync path from the global response, avoiding one API
+            # request per Telegram ID and making this sweep use its fetched snapshot.
+            profile = {"status": row.get("status"), "isVerified": row.get("isVerified") is True, "isTopGirl": row.get("isTopGirl") is True}
+            _site_profile_cache[user_id] = (time.monotonic() + 300, profile)
+        else:
+            _site_profile_cache.pop(user_id, None)
         try:
             cm = await bot.get_chat_member(GROUP_CHAT_ID, user_id)
             current = getattr(cm, "sender_tag", None) or getattr(cm, "api_kwargs", {}).get("sender_tag")

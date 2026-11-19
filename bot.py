@@ -262,8 +262,10 @@ async def reconcile_all_site_member_tags(bot):
     """Daily sweep of known group members; lookup failures never revoke tags."""
     members = await store.all_members(GROUP_CHAT_ID)
     checked = failures = 0
+    # Force fresh site lookups during the sweep rather than using message-time cache.
     for row in members:
         user_id = row["user_id"]
+        _site_profile_cache.pop(user_id, None)
         try:
             cm = await bot.get_chat_member(GROUP_CHAT_ID, user_id)
             current = getattr(cm, "sender_tag", None) or getattr(cm, "api_kwargs", {}).get("sender_tag")
@@ -970,8 +972,13 @@ async def run_tick(bot):
         now_sync = datetime.now(timezone.utc)
         if sync_at is None or now_sync - sync_at >= timedelta(hours=24):
             try:
-                await reconcile_all_site_member_tags(bot)
-                await store.set_time("site_tag_sync_at", now_sync)
+                checked, failures = await reconcile_all_site_member_tags(bot)
+                # Persist the 24-hour cadence only after a complete Telegram sweep.
+                # If it was incomplete, retry on the next scheduler tick.
+                if failures == 0:
+                    await store.set_time("site_tag_sync_at", now_sync)
+                else:
+                    log.warning("Site-tag reconciliation incomplete; will retry next tick.")
             except Exception as exc:
                 log.warning("Daily site-tag reconciliation failed: %s", exc)
         await run_ad_reminders(bot)

@@ -258,13 +258,27 @@ async def sync_site_member_tags(bot, user_id, current_tag=None):
         await set_tag(bot, user_id, target, current or None)
 
 
+async def fetch_all_site_telegram_profiles():
+    if not APPROAPE_BOT_API_KEY:
+        raise RuntimeError("APPROAPE_BOT_API_KEY missing")
+    url = APPROAPE_API_URL.replace("mode=telegram-bot-profile", "mode=telegram-bot-profiles")
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(url, headers={"Authorization": f"Bearer {APPROAPE_BOT_API_KEY}"})
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("success") is not True or not isinstance(payload.get("profiles"), list):
+        raise RuntimeError("Approape global profile response invalid")
+    return payload["profiles"]
+
+
 async def reconcile_all_site_member_tags(bot):
-    """Daily sweep of known group members; lookup failures never revoke tags."""
-    members = await store.all_members(GROUP_CHAT_ID)
-    checked = failures = 0
-    # Force fresh site lookups during the sweep rather than using message-time cache.
-    for row in members:
-        user_id = row["user_id"]
+    """Sweep site-linked IDs (primary source), plus previously observed group IDs."""
+    site_profiles = await fetch_all_site_telegram_profiles()
+    ids = {int(row["telegram_id"]) for row in site_profiles if str(row.get("telegram_id", "")).isdigit()}
+    # Supplemental list only; the site API remains the primary source.
+    ids.update(int(row["user_id"]) for row in await store.all_members(GROUP_CHAT_ID))
+    checked = failures = skipped = 0
+    for user_id in sorted(ids):
         _site_profile_cache.pop(user_id, None)
         try:
             cm = await bot.get_chat_member(GROUP_CHAT_ID, user_id)
@@ -272,9 +286,10 @@ async def reconcile_all_site_member_tags(bot):
             await sync_site_member_tags(bot, user_id, current)
             checked += 1
         except Exception as exc:
+            # Never remove or change a tag when membership lookup is uncertain.
             failures += 1
-            log.warning("Daily site-tag reconciliation failed for %s: %s", user_id, exc)
-    log.info("Daily site-tag reconciliation: checked=%s failures=%s", checked, failures)
+            log.warning("Site-tag reconciliation failed for %s: %s", user_id, exc)
+    log.info("Global site-tag reconciliation: site_profiles=%s ids=%s checked=%s failures=%s", len(site_profiles), len(ids), checked, failures)
     return checked, failures
 
 

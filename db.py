@@ -119,6 +119,10 @@ class Store:
         async with self.pool.connection() as conn:
             cur = await conn.execute(sql, params); return await cur.fetchall()
 
+    async def all_members(self, chat_id):
+        return await self._all("SELECT user_id FROM members WHERE chat_id=%s ORDER BY user_id", (chat_id,))
+    async def site_verified_exists(self, chat_id, user_id):
+        return await self._one("SELECT 1 AS x FROM site_verified WHERE chat_id=%s AND user_id=%s", (chat_id,user_id)) is not None
     async def get_member(self, chat_id, user_id):
         return await self._one("SELECT * FROM members WHERE chat_id=%s AND user_id=%s", (chat_id,user_id))
     async def add_member(self, chat_id, user, unlocked=False, legacy=False):

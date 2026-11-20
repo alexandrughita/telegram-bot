@@ -897,10 +897,10 @@ async def on_group_message(update, context):
                 await send_temporary(
                     bot, GROUP_CHAT_ID,
                     f"📣 {user.mention_html()}, ai folosit toate cele {limit} promovări disponibile în 24h. "
-                    "Ai avut acces. Acum aștepți resetarea limitei.\n\n"
-                    "🔥 Vrei să fii găsită și în afara grupului? Creează-ți cont gratuit pe approape.ro, "
-                    "adaugă-ți profilul și datele de contact.\n"
-                    "👉 Fă pasul următor și atrage cliente direct din site.",
+                    f"Vei putea publica din nou {friendly_when(retry, datetime.now(timezone.utc))}.\n\n"
+                    "🔥 Nu depinde doar de Telegram! Creează-ți un profil gratuit pe www.approape.ro "
+                    "și fii găsită și de clienți care caută direct pe site.\n"
+                    "👉 Adaugă-ți profilul și datele de contact pentru a atrage clienți și în afara grupului approape.ro.",
                     NOTICE_TTL_SECONDS,
                     reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
                         "🚀 Creează-ți cont pe approape.ro", url="https://approape.ro/"

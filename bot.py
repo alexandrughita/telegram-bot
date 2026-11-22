@@ -547,8 +547,7 @@ async def cmd_profil(update, context):
         await update.effective_message.reply_text("Nu am putut contacta approape.ro acum. Încearcă din nou mai târziu.")
 
 
-async def cmd_start(update, context):
-    payload = context.args[0] if context.args else ""
+async def cmd_start(update, context):    payload = context.args[0] if context.args else ""
     if payload == "invite":
         await invite_status(update, context)
     elif payload in HELP_TOPICS:
@@ -897,7 +896,9 @@ async def on_group_message(update, context):
                 await send_temporary(
                     bot, GROUP_CHAT_ID,
                     f"📣 {user.mention_html()}, ai folosit toate cele {limit} promovări disponibile în 24h. "
-                    f"Vei putea publica din nou {friendly_when(retry, datetime.now(timezone.utc))}.\n\n"
+                    oldest = await store.oldest_ad(GROUP_CHAT_ID, user.id, AD_WINDOW_HOURS)
+                retry = oldest["created_at"] + timedelta(hours=AD_WINDOW_HOURS) if oldest else datetime.now(timezone.utc)
+                f"Vei putea publica din nou {friendly_when(retry, datetime.now(timezone.utc))}.\n\n"
                     "🔥 Nu depinde doar de Telegram! Creează-ți un profil gratuit pe www.approape.ro "
                     "și fii găsită și de clienți care caută direct pe site.\n"
                     "👉 Adaugă-ți profilul și datele de contact pentru a atrage clienți și în afara grupului approape.ro.",
@@ -1097,8 +1098,7 @@ async def cmd_chatid(update, context):
 
 def target_user(message, args):
     replied = message.reply_to_message
-    if replied and replied.from_user and not replied.from_user.is_bot and not replied.sender_chat:
-        return replied.from_user.id, replied.from_user.mention_html()
+    if replied and replied.from_user and not replied.from_user.is_bot and not replied.sender_chat:        return replied.from_user.id, replied.from_user.mention_html()
     if args and args[0].lstrip("-").isdigit():
         return int(args[0]), f"id {args[0]}"
     return None, None

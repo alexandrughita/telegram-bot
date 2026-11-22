@@ -894,11 +894,11 @@ async def on_group_message(update, context):
                     NOTICE_TTL_SECONDS, reply_to_message_id=message.message_id,
                 )
             elif new_count >= limit:  # only the last allowed ad gets a reply
+                oldest = await store.oldest_ad(GROUP_CHAT_ID, user.id, AD_WINDOW_HOURS)
+                retry = oldest["created_at"] + timedelta(hours=AD_WINDOW_HOURS) if oldest else datetime.now(timezone.utc)
                 await send_temporary(
                     bot, GROUP_CHAT_ID,
                     f"📣 {user.mention_html()}, ai folosit toate cele {limit} promovări disponibile în 24h. "
-                    oldest = await store.oldest_ad(GROUP_CHAT_ID, user.id, AD_WINDOW_HOURS)
-                    retry = oldest["created_at"] + timedelta(hours=AD_WINDOW_HOURS) if oldest else datetime.now(timezone.utc)
                     f"Vei putea publica din nou {friendly_when(retry, datetime.now(timezone.utc))}.\n\n"
                     "🔥 Nu depinde doar de Telegram! Creează-ți un profil gratuit pe www.approape.ro "
                     "și fii găsită și de clienți care caută direct pe site.\n"

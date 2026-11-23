@@ -717,7 +717,7 @@ async def handle_ad(bot, message):
                       f"Revii {friendly_when(retry, datetime.now(timezone.utc))}. "
                       f"Orice reclamă înainte de reset se șterge. Fără negocieri.\n\n{REAL_MESSAGES_NOTE}")
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🎥 Trimite video pentru verificare", callback_data="menu:om")],
+                [InlineKeyboardButton("🎥 Trimite video pentru verificare", url="https://t.me/approape_ro")],
                 [InlineKeyboardButton("🌐 Creează cont pe approape.ro", url="https://approape.ro/?auth=login")],
             ])
             await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS, reply_markup=keyboard)

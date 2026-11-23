@@ -58,7 +58,7 @@ TOP_GIRL_TAG = "Top Girl"
 STICKERS_PER_DAY = 2
 STICKER_WINDOW_HOURS = 24
 # Ends every note that deletes an ad or a sticker over the limit.
-REAL_MESSAGES_NOTE = ("Folosește grupul pentru conversații reale. Pentru a beneficia de mai multe promovări, trimite un video pentru verificare sau creează-ți un cont pe approape.ro.")
+REAL_MESSAGES_NOTE = ("Folosește grupul pentru conversații reale. Mai poți publica mesaje promoționale dacă incluzi linkul profilului tău de pe approape.ro.")
 
 logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s", level=logging.INFO)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -716,11 +716,7 @@ async def handle_ad(bot, message):
             notice = (f"⛔ {user.mention_html()}, ai epuizat plafonul: {limit} {unit} în 24h. "
                       f"Revii {friendly_when(retry, datetime.now(timezone.utc))}. "
                       f"Orice reclamă înainte de reset se șterge. Fără negocieri.\n\n{REAL_MESSAGES_NOTE}")
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("🎥 Trimite video pentru verificare", url="https://t.me/approape_ro")],
-                [InlineKeyboardButton("🌐 Creează cont pe approape.ro", url="https://approape.ro/?auth=login")],
-            ])
-            await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS, reply_markup=keyboard)
+            await send_temporary(bot, GROUP_CHAT_ID, notice, NOTICE_TTL_SECONDS)
         return False
 
     return True

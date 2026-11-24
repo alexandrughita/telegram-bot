@@ -12,7 +12,8 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Request, Response
 from telegram import ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, MessageEntity, Update
-from telegram.error import Forbidden
+from telegram.error import BadRequest, Forbidden, NetworkError, TimedOut
+from telegram.request import HTTPXRequest
 from telegram.ext import (
     Application, CallbackQueryHandler, ChatMemberHandler, CommandHandler,
     ContextTypes, MessageHandler, filters,
@@ -98,10 +99,40 @@ def spawn(coro):
     task.add_done_callback(_background.discard)
 
 
+async def delete_message_with_retry(bot, chat_id, message_id, *, purpose):
+    """Retry transient Telegram transport failures without masking permission errors.
+
+    A timeout can happen after Telegram has already deleted the message. In that case,
+    the retry may return 'message to delete not found'; treat that as successful deletion.
+    """
+    for attempt in range(1, 4):
+        try:
+            await bot.delete_message(chat_id, message_id)
+            return True
+        except BadRequest as exc:
+            if "message to delete not found" in str(exc).casefold():
+                log.info("Message %s already deleted after %s timeout", message_id, purpose)
+                return True
+            raise
+        except (TimedOut, NetworkError) as exc:
+            if attempt == 3:
+                log.warning(
+                    "Telegram delete exhausted retries for message %s (%s): %s",
+                    message_id, purpose, exc,
+                )
+                raise
+            delay = 0.8 * attempt
+            log.warning(
+                "Telegram delete timeout for message %s (%s), retry %s/2 in %.1fs: %s",
+                message_id, purpose, attempt, delay, exc,
+            )
+            await asyncio.sleep(delay)
+
+
 async def delete_later(bot, chat_id, message_id, seconds):
     await asyncio.sleep(seconds)
     try:
-        await bot.delete_message(chat_id, message_id)
+        await delete_message_with_retry(bot, chat_id, message_id, purpose="temporary notice")
     except Exception:
         pass
 
@@ -112,7 +143,9 @@ async def delete_member_message(bot, message, user_id, reason):
     one since start is told to support: it usually means the bot lost "Delete messages"."""
     global _delete_refusal_reported
     try:
-        await bot.delete_message(message.chat_id, message.message_id)
+        await delete_message_with_retry(
+            bot, message.chat_id, message.message_id, purpose="moderation",
+        )
         return True
     except Exception as exc:
         log.warning("Message %s not deleted: %s", message.message_id, exc)
@@ -1561,7 +1594,20 @@ async def cmd_stats(update, context):
 
 
 def build_application():
-    application = Application.builder().token(BOT_TOKEN).updater(None).build()
+    telegram_request = HTTPXRequest(
+        connection_pool_size=16,
+        connect_timeout=10.0,
+        read_timeout=20.0,
+        write_timeout=20.0,
+        pool_timeout=10.0,
+    )
+    application = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .updater(None)
+        .request(telegram_request)
+        .build()
+    )
     private = filters.ChatType.PRIVATE
     group = filters.Chat(GROUP_CHAT_ID) if GROUP_CHAT_ID else filters.ChatType.GROUPS
     application.add_handler(CommandHandler("chatid", cmd_chatid))
@@ -1623,6 +1669,31 @@ async def tick(request: Request):
     return {"ok": True}
 
 
+async def check_bot_delete_permission(bot):
+    """Log the bot's actual Telegram admin status and message-deletion permission."""
+    if not GROUP_CHAT_ID:
+        log.warning("Cannot check Telegram delete permission: GROUP_CHAT_ID is not configured")
+        return
+    try:
+        me = await bot.get_me()
+        member = await bot.get_chat_member(GROUP_CHAT_ID, me.id)
+        status = member.status
+        can_delete = status in ADMIN_STATUSES and bool(
+            getattr(member, "can_delete_messages", False)
+        )
+        log.info(
+            "Telegram bot permissions: bot_id=%s status=%s can_delete_messages=%s",
+            me.id, status, can_delete,
+        )
+        if not can_delete:
+            log.error(
+                "BOT CANNOT DELETE GROUP MESSAGES: promote it to administrator "
+                "and enable 'Delete messages'."
+            )
+    except Exception:
+        log.exception("Could not verify the bot's Telegram delete permission")
+
+
 async def main():
     global store, tg_app
     if not DATABASE_URL or len(WEBHOOK_SECRET) < 16:
@@ -1631,6 +1702,7 @@ async def main():
     await store.open()
     tg_app = build_application()
     await tg_app.initialize()
+    await check_bot_delete_permission(tg_app.bot)
     await tg_app.start()
     if GROUP_CHAT_ID:
         spawn(lift_invite_locks(tg_app.bot))

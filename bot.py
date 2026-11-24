@@ -34,7 +34,7 @@ TICK_SECRET = os.environ.get("TICK_SECRET", "")
 GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID") or 0)
 SUPPORT_CHAT_ID = int(os.environ.get("SUPPORT_CHAT_ID") or 0)
 GROUP_INVITE_URL = os.environ.get("GROUP_INVITE_URL", "").strip()
-APPROAPE_API_URL = os.environ.get("APPROAPE_API_URL", "https://www.approape.ro/api/claim-profile?mode=telegram-bot-profile")
+APPROAPE_API_URL = os.environ.get("APPROAPE_API_URL", "https://approape.vercel.app/api/claim-profile?mode=telegram-bot-profile")
 APPROAPE_BOT_API_KEY = os.environ.get("APPROAPE_BOT_API_KEY", "")
 
 DUPLICATE_COOLDOWN_HOURS = float(os.environ.get("DUPLICATE_COOLDOWN_HOURS", "6"))

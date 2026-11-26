@@ -34,7 +34,6 @@ TICK_SECRET = os.environ.get("TICK_SECRET", "")
 GROUP_CHAT_ID = int(os.environ.get("GROUP_CHAT_ID") or 0)
 SUPPORT_CHAT_ID = int(os.environ.get("SUPPORT_CHAT_ID") or 0)
 GROUP_INVITE_URL = os.environ.get("GROUP_INVITE_URL", "").strip()
-APPROAPE_API_URL = os.environ.get("APPROAPE_API_URL", "https://approape.vercel.app/api/claim-profile?mode=telegram-bot-profile")
 APPROAPE_BOT_API_KEY = os.environ.get("APPROAPE_BOT_API_KEY", "")
 
 DUPLICATE_COOLDOWN_HOURS = float(os.environ.get("DUPLICATE_COOLDOWN_HOURS", "6"))
@@ -75,7 +74,6 @@ FALLBACK_POSTING = ChatPermissions(
     can_add_web_page_previews=True, can_invite_users=True,
 )
 _admin_cache = {}
-_site_profile_cache = {}
 _permissions_cache = {}
 _support_ack_at = {}
 _background = set()
@@ -237,101 +235,6 @@ async def tag_advertiser(bot, message):
     user_id = message.from_user.id
     tag = VERIFIED_TAG if await store.is_verified(GROUP_CHAT_ID, user_id) else UNVERIFIED_TAG
     await set_tag(bot, user_id, tag, message.api_kwargs.get("sender_tag"))
-
-
-async def fetch_site_profile(telegram_id):
-    """Fetch the profile linked to this Telegram account; never search by username."""
-    if not APPROAPE_BOT_API_KEY:
-        return None
-    try:
-        async with httpx.AsyncClient(timeout=8.0) as client:
-            response = await client.post(
-                APPROAPE_API_URL,
-                params={"telegram_id": str(telegram_id)},
-                headers={"Authorization": f"Bearer {APPROAPE_BOT_API_KEY}"},
-            )
-        if response.status_code == 404:
-            return None
-        response.raise_for_status()
-        payload = response.json()
-        return payload.get("profile") if payload.get("linked") and payload.get("hasProfile") else None
-    except Exception as exc:
-        log.info("Approape profile sync unavailable for %s: %s", telegram_id, exc)
-        return None
-
-
-async def sync_site_member_tags(bot, user_id, current_tag=None):
-    """Synchronize site verification/Top Girl tags without overwriting unrelated manual tags."""
-    now = time.monotonic()
-    cached = _site_profile_cache.get(user_id)
-    if cached and cached[0] > now:
-        profile = cached[1]
-    else:
-        profile = await fetch_site_profile(user_id)
-        _site_profile_cache[user_id] = (now + 300, profile)
-    if profile is None:
-        return
-
-    active = profile.get("status") == "active"
-    site_verified = active and profile.get("isVerified") is True
-    site_top_girl = active and profile.get("isTopGirl") is True
-    previously_site_top = await store.sync_site_top_girl(GROUP_CHAT_ID, user_id, site_top_girl)
-    previously_site_verified = await store.site_verified_exists(GROUP_CHAT_ID, user_id)
-    await store.set_site_verified(GROUP_CHAT_ID, user_id, site_verified)
-
-    current = (current_tag or "").strip()
-    folded = current.casefold()
-    managed = {VERIFIED_TAG.casefold(), UNVERIFIED_TAG.casefold(), ""}
-    if current and folded not in managed and folded != TOP_GIRL_TAG.casefold() and not previously_site_top and not previously_site_verified:
-        return
-    if folded == TOP_GIRL_TAG.casefold() and not previously_site_top and not site_top_girl:
-        return
-    target = TOP_GIRL_TAG if site_top_girl else (VERIFIED_TAG if site_verified else UNVERIFIED_TAG)
-    if current != target:
-        await set_tag(bot, user_id, target, current or None)
-
-
-async def fetch_all_site_telegram_profiles():
-    if not APPROAPE_BOT_API_KEY:
-        raise RuntimeError("APPROAPE_BOT_API_KEY missing")
-    url = APPROAPE_API_URL.replace("mode=telegram-bot-profile", "mode=telegram-bot-profiles")
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(url, headers={"Authorization": f"Bearer {APPROAPE_BOT_API_KEY}"})
-    response.raise_for_status()
-    payload = response.json()
-    if payload.get("success") is not True or not isinstance(payload.get("profiles"), list):
-        raise RuntimeError("Approape global profile response invalid")
-    return payload["profiles"]
-
-
-async def reconcile_all_site_member_tags(bot):
-    """Sweep site-linked IDs (primary source), plus previously observed group IDs."""
-    site_profiles = await fetch_all_site_telegram_profiles()
-    profiles_by_id = {int(row["telegram_id"]): row for row in site_profiles if str(row.get("telegram_id", "")).isdigit()}
-    ids = set(profiles_by_id)
-    # Supplemental list only; the site API remains the primary source.
-    ids.update(int(row["user_id"]) for row in await store.all_members(GROUP_CHAT_ID))
-    checked = failures = skipped = 0
-    for user_id in sorted(ids):
-        row = profiles_by_id.get(user_id)
-        if row:
-            # Seed the normal sync path from the global response, avoiding one API
-            # request per Telegram ID and making this sweep use its fetched snapshot.
-            profile = {"status": row.get("status"), "isVerified": row.get("isVerified") is True, "isTopGirl": row.get("isTopGirl") is True}
-            _site_profile_cache[user_id] = (time.monotonic() + 300, profile)
-        else:
-            _site_profile_cache.pop(user_id, None)
-        try:
-            cm = await bot.get_chat_member(GROUP_CHAT_ID, user_id)
-            current = getattr(cm, "sender_tag", None) or getattr(cm, "api_kwargs", {}).get("sender_tag")
-            await sync_site_member_tags(bot, user_id, current)
-            checked += 1
-        except Exception as exc:
-            # Never remove or change a tag when membership lookup is uncertain.
-            failures += 1
-            log.warning("Site-tag reconciliation failed for %s: %s", user_id, exc)
-    log.info("Global site-tag reconciliation: site_profiles=%s ids=%s checked=%s failures=%s", len(site_profiles), len(ids), checked, failures)
-    return checked, failures
 
 
 async def is_admin(bot, chat_id, user_id):
@@ -791,8 +694,6 @@ async def on_group_message(update, context):
     if not user or user.is_bot or await is_admin(bot, GROUP_CHAT_ID, user.id):
         return
 
-    await sync_site_member_tags(bot, user.id, message.api_kwargs.get("sender_tag"))
-
     # Illegal content (minors, gore…) is banned outright, whitelist or not. An age under 18
     # may be legal ("nu accept sub 18 ani"), so it is deleted and left to a person.
     text = message.text or message.caption or ""
@@ -1026,19 +927,6 @@ async def run_ad_reminders(bot):
 
 async def run_tick(bot):
     async with _tick_lock:
-        sync_at = await store.get_time("site_tag_sync_at")
-        now_sync = datetime.now(timezone.utc)
-        if sync_at is None or now_sync - sync_at >= timedelta(hours=24):
-            try:
-                checked, failures = await reconcile_all_site_member_tags(bot)
-                # Persist the 24-hour cadence only after a complete Telegram sweep.
-                # If it was incomplete, retry on the next scheduler tick.
-                if failures == 0:
-                    await store.set_time("site_tag_sync_at", now_sync)
-                else:
-                    log.warning("Site-tag reconciliation incomplete; will retry next tick.")
-            except Exception as exc:
-                log.warning("Daily site-tag reconciliation failed: %s", exc)
         await run_ad_reminders(bot)
         now = datetime.now(timezone.utc)
         stats = await store.daily_post_stats(GROUP_CHAT_ID)

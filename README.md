@@ -89,8 +89,8 @@ and kept for good, so "why was she muted?" can still be answered weeks later:
     WHERE user_id = <id> ORDER BY created_at DESC;
 
 **Approape.ro profile link**
-- In the private chat, `/profil` checks the sender's own Telegram account against the site's authenticated Telegram link and shows whether a profile is active, its public URL and WhatsApp-confirmed state.
-- Configure `APPROAPE_API_URL=https://www.approape.ro/api/telegram-bot` and `APPROAPE_BOT_API_KEY` on Render. Set the same secret as `TELEGRAM_BOT_API_KEY` in the Nearby/Vercel production environment. The endpoint fails closed without the shared secret and returns only minimal profile status data.
+- In the private chat, `/profil` checks only the sender's own Telegram account against the site's authenticated Telegram link and shows whether a profile is active, its public URL and WhatsApp-confirmed state.
+- Configure `APPROAPE_BOT_API_KEY` on Render and the matching `TELEGRAM_BOT_API_KEY` in the Nearby/Vercel production environment. This credential is used only by the on-demand `/profil` command; the bot no longer synchronizes or changes Telegram member tags from site profile status.
 - Users connect Telegram from approape.ro → Contul meu → Telegram. The bot never searches profiles by username and never exposes another member's profile details.
 
 **Help desk**
